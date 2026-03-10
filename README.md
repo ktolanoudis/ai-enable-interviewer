@@ -8,7 +8,7 @@
 
 ---
 
-## 📖 Overview
+## Overview
 
 This is a **research-grade AI interview system** that conducts structured discovery interviews with multiple stakeholders across an organization to identify, validate, and prioritize AI opportunities.
 
@@ -279,7 +279,7 @@ custom_css = "/public/custom.css"
 
 ---
 
-## 🚢 Docker Deployment
+## Docker Deployment
 
 This project supports both deployment patterns:
 - **Stateful (default):** local SQLite + local report files (`/app/data`, `/app/reports`)
@@ -515,9 +515,8 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## Acknowledgments
 
-- **Chainlit**: For the amazing conversational AI framework
+- **Chainlit**: For the conversational AI framework
 - **OpenAI**: For GPT models powering the intelligence
-- **Research Sources**: Framework based on industry best practices ([6], [10], [11], [12], [13])
 
 ---
 
