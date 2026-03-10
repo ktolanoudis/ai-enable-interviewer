@@ -525,32 +525,8 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 **For questions, suggestions, or collaboration:**
 
-- Email: [your-email@example.com]
+- Email: [ktolanoudis@ethz.ch]
 - GitHub Issues: [Create an issue](https://github.com/yourusername/discovery/issues)
 - Discussions: [Start a discussion](https://github.com/yourusername/discovery/discussions)
 
 ---
-
-## Star History
-
-If you find this project useful, please consider giving it a star ⭐
-
----
-
-## Project Stats
-
-- **Lines of Code**: ~2,500+
-- **Modules**: 8 core modules
-- **Documentation**: 7 comprehensive guides (150+ pages)
-- **Test Coverage**: Framework validation checklist
-- **Database Schema**: 2 tables (sessions, company_insights)
-
----
-
-<div align="center">
-
-**Built with love for AI transformation research**
-
-[⬆ Back to Top](#ai-use-case-discovery-agent)
-
-</div>
