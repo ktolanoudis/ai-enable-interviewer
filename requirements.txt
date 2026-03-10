@@ -1,0 +1,7 @@
+chainlit
+openai
+pydantic
+python-dotenv
+requests
+pymongo
+boto3

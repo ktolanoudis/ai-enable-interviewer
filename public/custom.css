@@ -1,0 +1,53 @@
+/* Aggressively hide ALL avatars and logos */
+.message-avatar,
+[class*="Avatar"],
+[class*="avatar"],
+.MuiAvatar-root,
+[data-testid="avatar"],
+.css-1sokdxx,
+.css-70qvj9,
+div[class*="MuiAvatar"] {
+    display: none !important;
+    visibility: hidden !important;
+    width: 0 !important;
+    height: 0 !important;
+    opacity: 0 !important;
+}
+
+/* Hide all SVG and IMG in avatars */
+.MuiAvatar-root svg,
+.MuiAvatar-root img,
+[class*="Avatar"] svg,
+[class*="Avatar"] img,
+img[alt="avatar"],
+img[src*="logo"],
+svg[class*="avatar"] {
+    display: none !important;
+    visibility: hidden !important;
+}
+
+/* Hide the container that holds the avatar */
+.step-start > div:first-child,
+.message > div:first-child:has(.MuiAvatar-root) {
+    display: none !important;
+}
+
+/* Adjust message container spacing */
+.step,
+.step-container,
+.message,
+.message-container {
+    padding-left: 0 !important;
+    margin-left: 0 !important;
+}
+
+/* Remove all flex gaps where avatar would be */
+.MuiBox-root {
+    gap: 0 !important;
+}
+
+/* Target Chainlit specific avatar wrapper */
+div[class^="Step-root"] > div:first-child,
+div[class*="Message-root"] > div:first-child {
+    display: none !important;
+}
