@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 import chainlit as cl
 
 sys.path.append(os.path.dirname(__file__))
-load_dotenv(override=True)
+load_dotenv(override=False)
 
 from interview_agent import next_question, update_notes
 from report_agent import generate_report

@@ -4,7 +4,7 @@ from typing import Dict, Any, List, Optional
 from dotenv import load_dotenv
 from openai import OpenAI
 
-load_dotenv(override=True)
+load_dotenv(override=False)
 
 MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 

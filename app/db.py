@@ -6,7 +6,7 @@ from typing import Dict, List, Optional
 
 from dotenv import load_dotenv
 
-load_dotenv(override=True)
+load_dotenv(override=False)
 
 DB_BACKEND = os.getenv("DB_BACKEND", "sqlite").strip().lower()
 SQLITE_DB_PATH = os.getenv("SQLITE_DB_PATH", "data/sessions.db")
@@ -19,7 +19,12 @@ def _is_mongo_enabled() -> bool:
 
 
 def _mongo_collections():
-    from pymongo import MongoClient
+    try:
+        from pymongo import MongoClient
+    except ModuleNotFoundError as exc:
+        raise RuntimeError(
+            "DB_BACKEND=mongodb requires pymongo. Install dependencies with: pip install -r requirements.txt"
+        ) from exc
 
     client = MongoClient(MONGODB_URI)
     db = client[MONGODB_DB_NAME]
@@ -49,6 +54,9 @@ def init_db():
             client.close()
         return
 
+    sqlite_dir = os.path.dirname(SQLITE_DB_PATH)
+    if sqlite_dir:
+        os.makedirs(sqlite_dir, exist_ok=True)
     conn = sqlite3.connect(SQLITE_DB_PATH)
     c = conn.cursor()
 

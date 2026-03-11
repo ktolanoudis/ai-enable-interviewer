@@ -1,6 +1,9 @@
 import datetime
 
-from schemas import Report
+try:
+    from .schemas import Report
+except ImportError:
+    from schemas import Report
 
 
 def generate_markdown_report(report: Report, metadata: dict) -> str:

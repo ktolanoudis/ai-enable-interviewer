@@ -1,9 +1,12 @@
 import os, json
 from dotenv import load_dotenv
 from openai import OpenAI
-from schemas import Report
+try:
+    from .schemas import Report
+except ImportError:
+    from schemas import Report
 
-load_dotenv(override=True)
+load_dotenv(override=False)
 
 MODEL = os.getenv("OPENAI_MODEL_REPORT", os.getenv("OPENAI_MODEL", "gpt-4o-mini"))
 

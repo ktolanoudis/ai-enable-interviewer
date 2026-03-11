@@ -2,8 +2,12 @@ import os
 from typing import Dict
 from urllib.parse import urlparse
 
-import boto3
-from botocore.config import Config
+try:
+    import boto3
+    from botocore.config import Config
+except ModuleNotFoundError:
+    boto3 = None
+    Config = None
 
 def _clean_env(name: str, default: str = "") -> str:
     """
@@ -45,6 +49,7 @@ S3_PUBLIC_BASE_URL = _clean_env("S3_PUBLIC_BASE_URL").rstrip("/")
 def _s3_enabled() -> bool:
     return (
         STORAGE_BACKEND == "s3"
+        and boto3 is not None
         and bool(S3_BUCKET)
         and bool(S3_ENDPOINT_URL)
         and bool(S3_KEY_ID)
@@ -53,6 +58,8 @@ def _s3_enabled() -> bool:
 
 
 def _s3_client():
+    if boto3 is None or Config is None:
+        raise RuntimeError("boto3 is required for REPORT_STORAGE_BACKEND=s3")
     return boto3.client(
         "s3",
         endpoint_url=S3_ENDPOINT_URL,
