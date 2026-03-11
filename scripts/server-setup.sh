@@ -50,8 +50,7 @@ resolve_value() {
 is_placeholder_image() {
   local image="$1"
   [ -z "${image}" ] \
-    || [ "${image}" = "ghcr.io/your-org/discovery:latest" ] \
-    || [ "${image}" = "ghcr.io/<owner>/<repo>:latest" ] \
+    || [[ "${image}" == ghcr.io/your-org/* ]] \
     || [[ "${image}" == *"<"*">"* ]]
 }
 
@@ -85,7 +84,7 @@ fi
 
 if is_placeholder_image "${discovery_image}"; then
   echo "Error: Could not determine DISCOVERY_IMAGE."
-  echo "Set DISCOVERY_IMAGE in .env, e.g. ghcr.io/<owner>/<repo>:latest"
+  echo "Set DISCOVERY_IMAGE in .env, e.g. ghcr.io/ktolanoudis/ai-enable-interviewer:latest"
   exit 1
 fi
 

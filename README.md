@@ -41,7 +41,7 @@ This is a **research-grade AI interview system** that conducts structured discov
 
 ```bash
 # 1. Clone the repository
-git clone <your-repo-url>
+git clone https://github.com/ktolanoudis/ai-enable-interviewer.git
 cd discovery
 
 # 2. Create virtual environment
@@ -263,19 +263,19 @@ Make the image pullable by others:
 1. Push this repository to GitHub.
 2. Let the `Build And Publish Docker Image` workflow run on `main`.
 3. In GitHub Packages, set the package visibility to **Public** (or keep it private and use `GHCR_USERNAME` + `GHCR_TOKEN` on the server).
-4. Use image: `ghcr.io/<owner>/<repo>:latest`
+4. Use image: `ghcr.io/ktolanoudis/ai-enable-interviewer:latest`
 
 Server setup:
 
 ```bash
 # 1) Pull the project on your server
-git clone <your-repo-url>
-cd <your-repo-folder>
+git clone https://github.com/ktolanoudis/ai-enable-interviewer.git
+cd ai-enable-interviewer
 
 # 2) Create and fill env vars
 cp .env.example .env
 # Edit .env with at least OPENAI_API_KEY
-# Set DISCOVERY_IMAGE=ghcr.io/<owner>/<repo>:latest
+# Set DISCOVERY_IMAGE=ghcr.io/ktolanoudis/ai-enable-interviewer:latest
 
 # 3) Run setup (one command)
 chmod +x scripts/server-setup.sh
@@ -287,8 +287,8 @@ After that, each new push to `main` builds a fresh image and Watchtower updates 
 Direct run without cloning this repo:
 
 ```bash
-docker pull ghcr.io/<owner>/<repo>:latest
-docker run -d --name discovery-app -p 8000:8000 --env-file .env ghcr.io/<owner>/<repo>:latest
+docker pull ghcr.io/ktolanoudis/ai-enable-interviewer:latest
+docker run -d --name discovery-app -p 8000:8000 --env-file .env ghcr.io/ktolanoudis/ai-enable-interviewer:latest
 ```
 
 If you use SQLite/local reports, mount persistent folders:
@@ -300,7 +300,7 @@ docker run -d --name discovery-app -p 8000:8000 \
   -e LOCAL_REPORTS_DIR=/app/reports \
   -v "$(pwd)/data:/app/data" \
   -v "$(pwd)/reports:/app/reports" \
-  ghcr.io/<owner>/<repo>:latest
+  ghcr.io/ktolanoudis/ai-enable-interviewer:latest
 ```
 
 ---
