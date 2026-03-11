@@ -263,7 +263,7 @@ Server setup:
 
 ```bash
 # 1) Pull the project on your server
-git clone <your-repo-url>
+git clone https://github.com/ktolanoudis/ai-enable-interviewer
 cd discovery
 
 # 2) Create and fill env vars
