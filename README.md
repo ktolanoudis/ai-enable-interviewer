@@ -264,7 +264,7 @@ Server setup:
 ```bash
 # 1) Pull the project on your server
 git clone https://github.com/ktolanoudis/ai-enable-interviewer
-cd discovery
+cd ai-enable-interviewer
 
 # 2) Create and fill env vars
 cp .env.example .env
