@@ -46,7 +46,7 @@ cd discovery
 
 # 2. Create virtual environment
 python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+source venv/bin/activate  
 
 # 3. Install dependencies
 pip install -r requirements.txt
@@ -59,10 +59,10 @@ cp .env.example .env
 ### Run the App
 
 ```bash
-chainlit run app/chainlit_app.py -w
+chainlit run app/chainlit_app.py -w --port "${PORT:-8000}"
 ```
 
-Then open your browser to `http://localhost:8000`
+Then open your browser to `http://localhost:${PORT:-8000}`
 
 ---
 
@@ -97,22 +97,7 @@ When a user enters their company name:
 3. User can confirm or correct if wrong
 4. Stored for all subsequent interviews
 
-### 4. Conversational Intelligence
-
-Handles natural conversation:
-
-```
-User: "Do you know what Dialectica does?"
-Agent: "I don't have specific knowledge yet - please explain!"
-
-User: "I have no idea" [about North Star]
-Agent: "No problem! Let's focus on your own work instead."
-
-User: "How much detail do you want?"
-Agent: "As much as feels natural - I'll ask follow-ups if needed."
-```
-
-### 5. Academic Framework (Steps 2-5)
+### 4. Academic Framework (Steps 2-5)
 
 Implements research-based methodology:
 
@@ -121,7 +106,7 @@ Implements research-based methodology:
 - **STEP 4**: KPI Definition (measurable success metrics)
 - **STEP 5**: Feasibility Evaluation (data, regulatory, technical)
 
-### 6. Value-Feasibility Scorecard
+### 5. Value-Feasibility Scorecard
 
 Each AI opportunity is scored and categorized:
 
@@ -177,52 +162,6 @@ Human-readable report with:
 
 ---
 
-## Architecture
-
-```
-app/
-├── chainlit_app.py             # Main chat application (PRODUCTION)
-├── company_research.py         # Automatic company lookup
-├── conversation_utils.py       # Shared conversation helper functions
-├── role_classifier.py          # Seniority detection & strategy
-├── meta_question_handler.py    # Conversational intelligence
-├── interview_agent.py          # Question planning & notes extraction
-├── interview_readiness.py      # Readiness and turn-completion logic
-├── report_agent.py             # Report generation via LLM
-├── report_formatting.py        # Markdown report formatting
-├── storage.py                  # Local/S3 report file persistence
-├── db.py                       # SQLite/Mongo persistence for sessions/insights
-└── schemas.py                  # Pydantic data models
-
-data/
-└── sessions.db                 # SQLite database (when DB_BACKEND=sqlite)
-
-reports/
-├── report_20240115_143022.json
-└── report_20240115_143022.md   # Created unless DISABLE_LOCAL_REPORTS=1
-
-.chainlit/
-└── config.toml                 # Chainlit configuration
-```
-
-### Key Modules
-
-| Module | Purpose |
-|--------|----------|
-| **chainlit_app.py** | Event-driven chat interface, session management |
-| **company_research.py** | 3-tier company lookup (SerpAPI/DuckDuckGo/OpenAI) |
-| **role_classifier.py** | Automatic role detection, interview strategy |
-| **meta_question_handler.py** | Detects and responds to clarifying questions |
-| **interview_agent.py** | LLM-powered question generation (role-aware) |
-| **interview_readiness.py** | Readiness gates and yes/no detection helpers |
-| **report_agent.py** | Converts transcript to structured report |
-| **report_formatting.py** | Formats final report to markdown |
-| **storage.py** | Persists reports to local disk and/or S3 |
-| **db.py** | Pluggable persistence (SQLite or MongoDB Atlas) |
-| **schemas.py** | Pydantic models for validation |
-
----
-
 ## Configuration
 
 ### Environment Variables (.env)
@@ -241,6 +180,9 @@ SERPAPI_KEY=your_serpapi_key  # For better company lookup
 
 # Optional - Enable debug logs for question flow
 DEBUG_QUESTION_FLOW=1
+
+# Optional - App port for local/dev runs
+PORT=8000
 
 # Optional - Stateless DB backend (recommended for server deployment)
 DB_BACKEND=mongodb
@@ -334,28 +276,12 @@ After that, each new push to `main` builds a fresh image and Watchtower updates 
 
 ---
 
-## Documentation
-
-### Quick References
-- **[Quick Start Guide](QUICK_START_MULTI_STAKEHOLDER.md)** - Get started in 5 minutes
-- **[Multi-Stakeholder Guide](MULTI_STAKEHOLDER_GUIDE.md)** - Complete system overview
-- **[Company Research Guide](COMPANY_RESEARCH_GUIDE.md)** - Company lookup configuration
-- **[Meta-Question Examples](META_QUESTION_EXAMPLES.md)** - Conversational intelligence demo
-- **[Company Correction Feature](COMPANY_CORRECTION_FEATURE.md)** - Handling wrong company info
-
-### Deep Dives
-- **[Thesis Framework Alignment](THESIS_FRAMEWORK_ALIGNMENT.md)** - Academic methodology (60+ pages)
-- **[Implementation Summary](MULTI_STAKEHOLDER_IMPLEMENTATION_SUMMARY.md)** - Technical details
-- **[Testing Checklist](FRAMEWORK_TESTING_CHECKLIST.md)** - Validation guide
-
----
-
 ## Testing
 
 ### Quick Test: Single Interview
 
 ```bash
-chainlit run app/chainlit_app.py -w
+chainlit run app/chainlit_app.py -w --port "${PORT:-8000}"
 
 # Interview flow:
 1. Enter name: John Smith
@@ -480,43 +406,9 @@ OPENAI_MODEL_REPORT=gpt-4o  # Use different model for reports
 
 ---
 
-## Roadmap
-
-### Planned Features
-
-- [ ] **Company Dashboard**: Visual analytics across all interviews
-- [ ] **Automated Report Aggregation**: Company-wide master report
-- [ ] **Use Case Deduplication**: Merge similar opportunities from multiple interviews
-- [ ] **Stakeholder Consensus Tracking**: Agreement/disagreement visualization
-- [ ] **Multi-language Support**: Interviews in multiple languages
-- [ ] **PostgreSQL Migration**: For production multi-user scenarios
-- [ ] **API Integration**: RESTful API for programmatic access
-- [ ] **Export to PowerPoint**: Auto-generate presentation decks
-
----
-
-## Contributing
-
-Contributions are welcome! Please:
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
----
-
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
----
-
-## Acknowledgments
-
-- **Chainlit**: For the conversational AI framework
-- **OpenAI**: For GPT models powering the intelligence
 
 ---
 
@@ -525,7 +417,5 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 **For questions, suggestions, or collaboration:**
 
 - Email: [ktolanoudis@ethz.ch]
-- GitHub Issues: [Create an issue](https://github.com/yourusername/discovery/issues)
-- Discussions: [Start a discussion](https://github.com/yourusername/discovery/discussions)
 
 ---
