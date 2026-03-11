@@ -232,8 +232,9 @@ This project supports both deployment patterns:
 # Build
 docker build -t ai-enable-discovery:latest .
 
-# Run
-docker run --rm -p 8000:8000 \
+# Run (load PORT from .env for host/container mapping)
+set -a; source .env; set +a
+docker run --rm -p "${PORT:-8000}:${PORT:-8000}" \
   --env-file .env \
   -e SQLITE_DB_PATH=/app/data/sessions.db \
   -e LOCAL_REPORTS_DIR=/app/reports \
@@ -288,13 +289,15 @@ Direct run without cloning this repo:
 
 ```bash
 docker pull ghcr.io/ktolanoudis/ai-enable-interviewer:latest
-docker run -d --name discovery-app -p 8000:8000 --env-file .env ghcr.io/ktolanoudis/ai-enable-interviewer:latest
+set -a; source .env; set +a
+docker run -d --name discovery-app -p "${PORT:-8000}:${PORT:-8000}" --env-file .env ghcr.io/ktolanoudis/ai-enable-interviewer:latest
 ```
 
 If you use SQLite/local reports, mount persistent folders:
 
 ```bash
-docker run -d --name discovery-app -p 8000:8000 \
+set -a; source .env; set +a
+docker run -d --name discovery-app -p "${PORT:-8000}:${PORT:-8000}" \
   --env-file .env \
   -e SQLITE_DB_PATH=/app/data/sessions.db \
   -e LOCAL_REPORTS_DIR=/app/reports \
