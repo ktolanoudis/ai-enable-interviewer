@@ -262,14 +262,17 @@ This repo includes:
 Server setup:
 
 ```bash
-# 1) On your server, set the image you want to track
-export DISCOVERY_IMAGE=ghcr.io/<your-user-or-org>/<your-repo>:latest
+# 1) Pull the project on your server
+git clone <your-repo-url>
+cd discovery
 
-# 2) (If package is private) login once
-echo <github_pat_with_read_packages> | docker login ghcr.io -u <github_username> --password-stdin
+# 2) Create and fill env vars
+cp .env.example .env
+# Edit .env with at least OPENAI_API_KEY
 
-# 3) Start stack
-docker compose up -d
+# 3) Run setup (one command)
+chmod +x scripts/server-setup.sh
+./scripts/server-setup.sh
 ```
 
 After that, each new push to `main` builds a fresh image and Watchtower updates the running container automatically.
