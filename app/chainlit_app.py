@@ -145,7 +145,7 @@ async def start():
     cl.user_session.set("closed_notice_sent", False)
     
     # Send welcome message
-    welcome = """# Welcome!!
+    welcome = """# Welcome!
 
 This interview follows a research-based framework to identify AI opportunities.
 
