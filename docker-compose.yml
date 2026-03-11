@@ -1,6 +1,6 @@
 services:
   app:
-    image: ${DISCOVERY_IMAGE:-ghcr.io/your-org/discovery:latest}
+    image: ${DISCOVERY_IMAGE:-ghcr.io/<owner>/<repo>:latest}
     container_name: discovery-app
     restart: unless-stopped
     env_file:

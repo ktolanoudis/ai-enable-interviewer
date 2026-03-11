@@ -47,6 +47,14 @@ resolve_value() {
   printf '%s' "${fallback}"
 }
 
+is_placeholder_image() {
+  local image="$1"
+  [ -z "${image}" ] \
+    || [ "${image}" = "ghcr.io/your-org/discovery:latest" ] \
+    || [ "${image}" = "ghcr.io/<owner>/<repo>:latest" ] \
+    || [[ "${image}" == *"<"*">"* ]]
+}
+
 openai_key="$(resolve_value OPENAI_API_KEY "")"
 if [ -z "${openai_key}" ] || [ "${openai_key}" = "sk-your-openai-key" ]; then
   echo "Error: OPENAI_API_KEY is missing or still set to placeholder in .env."
@@ -54,7 +62,7 @@ if [ -z "${openai_key}" ] || [ "${openai_key}" = "sk-your-openai-key" ]; then
 fi
 
 discovery_image="$(resolve_value DISCOVERY_IMAGE "")"
-if [ -z "${discovery_image}" ] || [ "${discovery_image}" = "ghcr.io/your-org/discovery:latest" ]; then
+if is_placeholder_image "${discovery_image}"; then
   remote_url="$(git config --get remote.origin.url || true)"
   repo_path=""
 
@@ -75,7 +83,7 @@ if [ -z "${discovery_image}" ] || [ "${discovery_image}" = "ghcr.io/your-org/dis
   fi
 fi
 
-if [ -z "${discovery_image}" ] || [ "${discovery_image}" = "ghcr.io/your-org/discovery:latest" ]; then
+if is_placeholder_image "${discovery_image}"; then
   echo "Error: Could not determine DISCOVERY_IMAGE."
   echo "Set DISCOVERY_IMAGE in .env, e.g. ghcr.io/<owner>/<repo>:latest"
   exit 1
