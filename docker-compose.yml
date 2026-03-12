@@ -17,6 +17,9 @@ services:
     image: containrrr/watchtower:latest
     container_name: discovery-watchtower
     restart: unless-stopped
+    environment:
+      # Newer Docker daemons may reject Watchtower's older default API version.
+      - DOCKER_API_VERSION=${DOCKER_API_VERSION:-1.44}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     command: --interval 60 --cleanup --label-enable
