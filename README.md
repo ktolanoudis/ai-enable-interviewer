@@ -61,76 +61,44 @@ http://localhost:8000
 
 # Docker Deployment
 
-The application can also be run using Docker.
+Deployments use Docker Compose and rebuild from source on the server.
 
-## Build Image
-
-```bash
-docker build -t ai-enable-discovery .
-```
-
----
-
-## Run Container
+## One-Time Server Setup
 
 ```bash
-docker run -p 8000:8000 \
---env-file .env \
-ai-enable-discovery
+git clone https://github.com/ktolanoudis/ai-enable-interviewer.git
+cd ai-enable-interviewer
+cp .env.example .env
+# edit .env with required values
+chmod +x scripts/server-setup.sh
+./scripts/server-setup.sh
 ```
 
----
+## Manual Deploy
 
-## Stateful Mode (Local Development)
-
-Uses SQLite and local report storage.
+From the repo directory on the server:
 
 ```bash
-docker run -p 8000:8000 \
---env-file .env \
--e SQLITE_DB_PATH=/app/data/sessions.db \
--e LOCAL_REPORTS_DIR=/app/reports \
--v $(pwd)/data:/app/data \
--v $(pwd)/reports:/app/reports \
-ai-enable-discovery
+chmod +x scripts/deploy-prod.sh
+./scripts/deploy-prod.sh
 ```
 
----
+This pulls the latest `main`, rebuilds the image locally, and restarts the app via Compose.
 
-## Stateless Mode (Cloud Deployment)
+## Automatic Deploy on Push
 
-For production deployments using MongoDB and S3-compatible storage.
+Configure these GitHub repository secrets and enable `.github/workflows/deploy-from-source.yml`:
 
-Example environment configuration:
+- `DEPLOY_HOST` (server IP or hostname)
+- `DEPLOY_PORT` (optional, default `22`)
+- `DEPLOY_USER` (SSH user)
+- `DEPLOY_PATH` (absolute path to cloned repo on server)
+- `DEPLOY_SSH_KEY` (private key with access to that server)
 
-```
-DB_BACKEND=mongodb
-MONGODB_URI=mongodb+srv://user:password@cluster/database
-MONGODB_DB_NAME=ai_enable_discovery
-
-REPORT_STORAGE_BACKEND=s3
-S3_ENDPOINT_URL=https://s3.<region>.backblazeb2.com
-S3_REGION=us-east-005
-S3_BUCKET=your-bucket
-
-DISABLE_LOCAL_REPORTS=1
-```
-
-Run container
+The workflow SSHes into the server and runs:
 
 ```bash
-docker run -p 8000:8000 --env-file .env ai-enable-discovery
-```
-
----
-
-## Helper Script
-
-You can also run the container using the included helper script.
-
-```bash
-chmod +x scripts/docker-run.sh
-./scripts/docker-run.sh
+BRANCH=main ./scripts/deploy-prod.sh
 ```
 
 ---
