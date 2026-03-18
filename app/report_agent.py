@@ -50,6 +50,7 @@ Return ONLY valid JSON matching this schema:
 {
   "executive_summary": string,
   "north_star_alignment": string,
+  "north_star_source": string,  // "senior_stakeholder_interview" | "inferred_from_online_research" | "existing_company_memory" | "not_specified"
   "tasks": [
     {
       "name": string,
@@ -95,6 +96,8 @@ Return ONLY valid JSON matching this schema:
 Critical Rules:
 - Base EVERYTHING on the transcript - do not invent information
 - If data is missing for required string fields, use "Not specified" (not null)
+- Use interview_metadata.north_star_source_hint to set north_star_source whenever available.
+- If north_star_source_hint is absent or unclear, use "not_specified".
 - For optional/list fields, use [] where appropriate
 - Tasks should be granular and actionable (verb + object)
 - Friction levels should be assessed based on time waste, repetition, error-proneness
@@ -130,9 +133,17 @@ def _sanitize_report_data(data: dict) -> dict:
         return data
 
     # Top-level required string fields
-    for key in ("executive_summary", "north_star_alignment"):
+    for key in ("executive_summary", "north_star_alignment", "north_star_source"):
         if data.get(key) is None:
             data[key] = "Not specified"
+
+    if data.get("north_star_source") not in {
+        "senior_stakeholder_interview",
+        "inferred_from_online_research",
+        "existing_company_memory",
+        "not_specified",
+    }:
+        data["north_star_source"] = "not_specified"
 
     # Top-level list fields
     for key in (

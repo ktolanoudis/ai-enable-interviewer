@@ -1,53 +1,81 @@
-/* Aggressively hide ALL avatars and logos */
-.message-avatar,
-[class*="Avatar"],
-[class*="avatar"],
+/* Force avatar visuals to use /public/avatar-logo.png */
 .MuiAvatar-root,
-[data-testid="avatar"],
-.css-1sokdxx,
-.css-70qvj9,
-div[class*="MuiAvatar"] {
-    display: none !important;
-    visibility: hidden !important;
-    width: 0 !important;
-    height: 0 !important;
-    opacity: 0 !important;
+[class*="Avatar-root"],
+[data-testid="avatar"] {
+  background-image: url("/public/avatar-logo.png") !important;
+  background-size: cover !important;
+  background-position: center !important;
+  background-repeat: no-repeat !important;
 }
 
-/* Hide all SVG and IMG in avatars */
 .MuiAvatar-root svg,
 .MuiAvatar-root img,
-[class*="Avatar"] svg,
-[class*="Avatar"] img,
-img[alt="avatar"],
-img[src*="logo"],
-svg[class*="avatar"] {
-    display: none !important;
-    visibility: hidden !important;
+[class*="Avatar-root"] svg,
+[class*="Avatar-root"] img,
+[data-testid="avatar"] svg,
+[data-testid="avatar"] img {
+  opacity: 0 !important;
 }
 
-/* Hide the container that holds the avatar */
-.step-start > div:first-child,
-.message > div:first-child:has(.MuiAvatar-root) {
-    display: none !important;
+/* Persistent corner logos */
+body::before {
+  content: "" !important;
+  display: block !important;
+  position: fixed !important;
+  /* midpoint between left viewport edge and left chatbox edge */
+  left: calc((100vw - min(960px, 100vw - 32px)) / 4) !important;
+  bottom: 16px !important;
+  width: 220px !important;
+  height: 64px !important;
+  background: url("/public/uni-logo.png") left center / contain no-repeat !important;
+  z-index: 2147483647 !important;
+  pointer-events: none !important;
+  transform: translateX(-50%) !important;
 }
 
-/* Adjust message container spacing */
-.step,
-.step-container,
-.message,
-.message-container {
-    padding-left: 0 !important;
-    margin-left: 0 !important;
+body::after {
+  content: "" !important;
+  display: block !important;
+  position: fixed !important;
+  /* midpoint between right viewport edge and right chatbox edge */
+  right: calc((100vw - min(960px, 100vw - 32px)) / 4) !important;
+  bottom: 16px !important;
+  width: 260px !important;
+  height: 68px !important;
+  background: url("/public/lab-logo.png") right center / contain no-repeat !important;
+  z-index: 2147483647 !important;
+  pointer-events: none !important;
+  transform: translateX(50%) !important;
 }
 
-/* Remove all flex gaps where avatar would be */
-.MuiBox-root {
-    gap: 0 !important;
+/* Dark theme: use white logo variants for visibility. */
+@media (prefers-color-scheme: dark) {
+  body::before {
+    background-image: url("/public/uni-logo-light.png") !important;
+  }
+  body::after {
+    background-image: url("/public/lab-logo-light.png") !important;
+  }
 }
 
-/* Target Chainlit specific avatar wrapper */
-div[class^="Step-root"] > div:first-child,
-div[class*="Message-root"] > div:first-child {
-    display: none !important;
+html.dark body::before,
+body.dark::before,
+html[data-theme="dark"] body::before,
+body[data-theme="dark"]::before,
+html[data-color-scheme="dark"] body::before,
+body[data-color-scheme="dark"]::before,
+html[data-mui-color-scheme="dark"] body::before,
+body[data-mui-color-scheme="dark"]::before {
+  background-image: url("/public/uni-logo-light.png") !important;
+}
+
+html.dark body::after,
+body.dark::after,
+html[data-theme="dark"] body::after,
+body[data-theme="dark"]::after,
+html[data-color-scheme="dark"] body::after,
+body[data-color-scheme="dark"]::after,
+html[data-mui-color-scheme="dark"] body::after,
+body[data-mui-color-scheme="dark"]::after {
+  background-image: url("/public/lab-logo-light.png") !important;
 }

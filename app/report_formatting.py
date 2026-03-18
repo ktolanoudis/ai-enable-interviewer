@@ -8,9 +8,18 @@ except ImportError:
 
 def generate_markdown_report(report: Report, metadata: dict) -> str:
     """Convert Report object to Markdown following thesis framework structure."""
+    source_label_map = {
+        "senior_stakeholder_interview": "Senior stakeholder interview",
+        "inferred_from_online_research": "Inferred from online research",
+        "existing_company_memory": "Existing company memory (previous interview)",
+        "not_specified": "Not specified",
+    }
+    source_label = source_label_map.get(report.north_star_source, report.north_star_source)
+
     md = "# AI Use Case Discovery Report\n\n"
     md += "## Metadata\n\n"
     md += f"- **Employee:** {metadata['employee_name']}\n"
+    md += f"- **Email:** {metadata.get('email', 'N/A')}\n"
     md += f"- **Department:** {metadata['department']}\n"
     md += f"- **Position:** {metadata['role']}\n"
     md += f"- **Seniority:** {metadata.get('seniority_level', 'N/A')}\n"
@@ -20,6 +29,7 @@ def generate_markdown_report(report: Report, metadata: dict) -> str:
     md += "---\n\n"
     md += f"## Executive Summary\n\n{report.executive_summary}\n\n"
     md += f"### North Star Alignment\n\n{report.north_star_alignment}\n\n"
+    md += f"**North Star Source:** {source_label}\n\n"
 
     md += "---\n\n"
     md += f"## STEP 2: Task Inventory ({len(report.tasks)} tasks identified)\n\n"

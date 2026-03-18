@@ -26,6 +26,9 @@ def has_valid_north_star(value) -> bool:
 
 def avoid_immediate_question_repeat(response: str, messages: list) -> str:
     """Avoid asking the exact same assistant question twice in a row."""
+    if not isinstance(response, str):
+        return "Could you tell me more about your process?"
+
     if not response or not messages:
         return response
 
@@ -36,6 +39,9 @@ def avoid_immediate_question_repeat(response: str, messages: list) -> str:
             break
 
     if not last_assistant:
+        return response
+
+    if not isinstance(last_assistant, str):
         return response
 
     if response.strip().lower() == last_assistant.strip().lower():
@@ -64,9 +70,12 @@ def build_analysis_transcript(messages: list, metadata: dict) -> str:
     meta_lines = [
         "interview_metadata:",
         f"employee_name: {metadata.get('employee_name', 'Anonymous')}",
+        f"email: {metadata.get('email', '')}",
         f"department: {metadata.get('department', '')}",
         f"role: {metadata.get('role', '')}",
         f"company: {metadata.get('company', '')}",
+        f"seniority_level: {metadata.get('seniority_level', '')}",
+        f"north_star_source_hint: {metadata.get('north_star_source_hint', 'not_specified')}",
     ]
     chat_lines = [f'{m["role"]}: {m["content"]}' for m in messages]
     return "\n".join(meta_lines + ["", "chat_transcript:"] + chat_lines)

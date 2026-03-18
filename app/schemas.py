@@ -68,6 +68,9 @@ class Report(BaseModel):
     # Executive Summary
     executive_summary: str = Field(description="High-level overview of findings")
     north_star_alignment: str = Field(description="How findings align with organization's North Star strategy")
+    north_star_source: str = Field(
+        description="North Star provenance: senior_stakeholder_interview, inferred_from_online_research, existing_company_memory, or not_specified"
+    )
     
     # Step 2 Output: Task Inventory
     tasks: List[Task] = Field(description="Structured task inventory from interviews")

@@ -333,7 +333,25 @@ def plan_questions(notes: Dict[str, Any], history: List[Dict[str, str]],
     except Exception:
         data = _extract_json_loose(content)
 
-    return data.get("questions", [])
+    raw_questions = data.get("questions", [])
+    if not isinstance(raw_questions, list):
+        return []
+
+    normalized: List[str] = []
+    for item in raw_questions:
+        if isinstance(item, str):
+            q = item.strip()
+            if q:
+                normalized.append(q)
+            continue
+        if isinstance(item, dict):
+            for key in ("question", "text", "content", "prompt"):
+                val = item.get(key)
+                if isinstance(val, str) and val.strip():
+                    normalized.append(val.strip())
+                    break
+
+    return normalized
 
 def next_question(history: List[Dict[str, str]], notes: Dict[str, Any],
                   seniority_level: str = "intermediate", interview_count: int = 0,
@@ -359,7 +377,9 @@ def next_question(history: List[Dict[str, str]], notes: Dict[str, Any],
     )
     
     if questions:
-        return questions[0]
+        first = questions[0]
+        if isinstance(first, str) and first.strip():
+            return first.strip()
     
     # Fallback if no questions generated but not ready for report yet
     return "Could you tell me more about your process?"

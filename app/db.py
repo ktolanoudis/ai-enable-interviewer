@@ -31,6 +31,19 @@ def _mongo_collections():
     return client, db["sessions"], db["company_insights"]
 
 
+def _mongo_drafts_collection():
+    try:
+        from pymongo import MongoClient
+    except ModuleNotFoundError as exc:
+        raise RuntimeError(
+            "DB_BACKEND=mongodb requires pymongo. Install dependencies with: pip install -r requirements.txt"
+        ) from exc
+
+    client = MongoClient(MONGODB_URI)
+    db = client[MONGODB_DB_NAME]
+    return client, db["interview_drafts"]
+
+
 def _sqlite_columns(conn: sqlite3.Connection, table: str) -> set[str]:
     cur = conn.cursor()
     cur.execute(f"PRAGMA table_info({table})")
@@ -47,11 +60,15 @@ def _sqlite_ensure_column(conn: sqlite3.Connection, table: str, column: str, ddl
 def init_db():
     if _is_mongo_enabled():
         client, sessions_col, insights_col = _mongo_collections()
+        drafts_client, drafts_col = _mongo_drafts_collection()
         try:
             sessions_col.create_index([("company", 1), ("created_at", -1)])
             insights_col.create_index("company", unique=True)
+            drafts_col.create_index("draft_id", unique=True)
+            drafts_col.create_index([("updated_at", -1)])
         finally:
             client.close()
+            drafts_client.close()
         return
 
     sqlite_dir = os.path.dirname(SQLITE_DB_PATH)
@@ -93,6 +110,13 @@ def init_db():
                   all_use_cases TEXT,
                   validated_use_cases TEXT,
                   last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP)"""
+    )
+
+    c.execute(
+        """CREATE TABLE IF NOT EXISTS interview_drafts
+                 (draft_id TEXT PRIMARY KEY,
+                  payload TEXT,
+                  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)"""
     )
 
     conn.commit()
@@ -288,3 +312,149 @@ def get_company_insights(company: str) -> Optional[Dict]:
         "validated_use_cases": json.loads(row[7]) if row[7] else [],
         "last_updated": row[8],
     }
+
+
+def save_interview_checkpoint(draft_id: str, payload: Dict) -> None:
+    if not draft_id:
+        return
+
+    if _is_mongo_enabled():
+        client, drafts_col = _mongo_drafts_collection()
+        try:
+            drafts_col.replace_one(
+                {"draft_id": draft_id},
+                {"draft_id": draft_id, "payload": payload, "updated_at": datetime.utcnow()},
+                upsert=True,
+            )
+        finally:
+            client.close()
+        return
+
+    conn = sqlite3.connect(SQLITE_DB_PATH)
+    c = conn.cursor()
+    c.execute(
+        """CREATE TABLE IF NOT EXISTS interview_drafts
+                 (draft_id TEXT PRIMARY KEY,
+                  payload TEXT,
+                  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)"""
+    )
+    c.execute(
+        """INSERT INTO interview_drafts (draft_id, payload, updated_at)
+           VALUES (?, ?, CURRENT_TIMESTAMP)
+           ON CONFLICT(draft_id) DO UPDATE SET
+               payload = excluded.payload,
+               updated_at = CURRENT_TIMESTAMP""",
+        (draft_id, json.dumps(payload)),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_interview_checkpoint(draft_id: str) -> Optional[Dict]:
+    if not draft_id:
+        return None
+
+    if _is_mongo_enabled():
+        client, drafts_col = _mongo_drafts_collection()
+        try:
+            doc = drafts_col.find_one({"draft_id": draft_id})
+            if not doc:
+                return None
+            return doc.get("payload")
+        finally:
+            client.close()
+
+    conn = sqlite3.connect(SQLITE_DB_PATH)
+    c = conn.cursor()
+    c.execute(
+        """CREATE TABLE IF NOT EXISTS interview_drafts
+                 (draft_id TEXT PRIMARY KEY,
+                  payload TEXT,
+                  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)"""
+    )
+    c.execute("SELECT payload FROM interview_drafts WHERE draft_id = ?", (draft_id,))
+    row = c.fetchone()
+    conn.close()
+    if not row:
+        return None
+    return json.loads(row[0]) if row[0] else None
+
+
+def delete_interview_checkpoint(draft_id: str) -> None:
+    if not draft_id:
+        return
+
+    if _is_mongo_enabled():
+        client, drafts_col = _mongo_drafts_collection()
+        try:
+            drafts_col.delete_one({"draft_id": draft_id})
+        finally:
+            client.close()
+        return
+
+    conn = sqlite3.connect(SQLITE_DB_PATH)
+    c = conn.cursor()
+    c.execute(
+        """CREATE TABLE IF NOT EXISTS interview_drafts
+                 (draft_id TEXT PRIMARY KEY,
+                  payload TEXT,
+                  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)"""
+    )
+    c.execute("DELETE FROM interview_drafts WHERE draft_id = ?", (draft_id,))
+    conn.commit()
+    conn.close()
+
+
+def get_open_interview_checkpoints(limit: int = 20, owner_fingerprint: Optional[str] = None) -> List[Dict]:
+    if _is_mongo_enabled():
+        client, drafts_col = _mongo_drafts_collection()
+        try:
+            docs = list(drafts_col.find({}).sort("updated_at", -1).limit(max(1, int(limit))))
+            out: List[Dict] = []
+            for d in docs:
+                payload = d.get("payload") if isinstance(d, dict) else None
+                state = payload.get("state", {}) if isinstance(payload, dict) else {}
+                if not bool(state.get("report_done")):
+                    if owner_fingerprint and str(state.get("owner_fingerprint", "")) != str(owner_fingerprint):
+                        continue
+                    out.append(
+                        {
+                            "draft_id": d.get("draft_id"),
+                            "payload": payload,
+                            "updated_at": d.get("updated_at"),
+                        }
+                    )
+            return out
+        finally:
+            client.close()
+
+    conn = sqlite3.connect(SQLITE_DB_PATH)
+    c = conn.cursor()
+    c.execute(
+        """CREATE TABLE IF NOT EXISTS interview_drafts
+                 (draft_id TEXT PRIMARY KEY,
+                  payload TEXT,
+                  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)"""
+    )
+    c.execute(
+        "SELECT draft_id, payload, updated_at FROM interview_drafts ORDER BY updated_at DESC LIMIT ?",
+        (max(1, int(limit)),),
+    )
+    rows = c.fetchall()
+    conn.close()
+
+    out: List[Dict] = []
+    for draft_id, payload_raw, updated_at in rows:
+        payload = json.loads(payload_raw) if payload_raw else {}
+        state = payload.get("state", {}) if isinstance(payload, dict) else {}
+        if not bool(state.get("report_done")):
+            if owner_fingerprint and str(state.get("owner_fingerprint", "")) != str(owner_fingerprint):
+                continue
+            out.append(
+                {
+                    "draft_id": draft_id,
+                    "payload": payload,
+                    "updated_at": updated_at,
+                }
+            )
+    return out
