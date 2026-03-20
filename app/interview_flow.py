@@ -5,6 +5,7 @@ from feedback_flow import begin_use_case_feedback, build_use_case_rating_followu
 from meta_question_handler import (
     classify_confirmation_response,
     classify_use_case_feedback_response,
+    classify_use_case_scope_resolution,
     generate_use_case_feedback_clarification,
     generate_use_case_feedback_scope_followup,
     generate_use_case_feedback_structural_followup,
@@ -58,6 +59,30 @@ async def _close_from_state(send_assistant_message, messages: list, report_paylo
         report_payload=report_payload,
         use_case_feedback=use_case_feedback,
     )
+
+
+async def _advance_use_case_feedback_or_close(send_assistant_message, save_checkpoint, message, messages: list, report_payload: dict, feedback_entries: list):
+    use_cases = report_payload.get("use_cases") or []
+    next_index = int(cl.user_session.get("use_case_feedback_index", 0) or 0) + 1
+    cl.user_session.set("use_case_feedback_index", next_index)
+    cl.user_session.set("current_use_case_feedback", None)
+    cl.user_session.set("awaiting_use_case_opinion", False)
+    cl.user_session.set("awaiting_use_case_scope_resolution", False)
+    cl.user_session.set("awaiting_use_case_rating", False)
+
+    if next_index < len(use_cases):
+        await send_next_use_case_feedback_prompt(send_assistant_message, messages)
+        save_checkpoint(message)
+        return True
+
+    await _close_from_state(
+        send_assistant_message,
+        messages,
+        report_payload=report_payload,
+        use_case_feedback=feedback_entries,
+    )
+    save_checkpoint(message)
+    return True
 
 
 async def maybe_handle_company_context_phase(user_input: str, message, save_checkpoint, send_assistant_message) -> bool:
@@ -304,6 +329,17 @@ async def maybe_handle_closure_phase(user_input: str, message, save_checkpoint, 
         if intent == "scope_mismatch":
             followup = generate_use_case_feedback_scope_followup(user_input, use_case_context, messages)
             if followup:
+                current_use_case = use_cases[index] if 0 <= index < len(use_cases) else {}
+                cl.user_session.set(
+                    "current_use_case_feedback",
+                    {
+                        "use_case_name": current_use_case.get("use_case_name", "AI Use Case"),
+                        "description": current_use_case.get("description", ""),
+                        "rating": None,
+                        "comment": user_input,
+                    },
+                )
+                cl.user_session.set("awaiting_use_case_scope_resolution", True)
                 messages.append({"role": "user", "content": user_input})
                 messages.append({"role": "assistant", "content": followup})
                 cl.user_session.set("messages", messages)
@@ -339,6 +375,62 @@ async def maybe_handle_closure_phase(user_input: str, message, save_checkpoint, 
         messages.append({"role": "assistant", "content": rating_prompt})
         cl.user_session.set("messages", messages)
         await send_assistant_message(rating_prompt)
+        save_checkpoint(message)
+        return True
+
+    if cl.user_session.get("awaiting_use_case_scope_resolution", False):
+        messages = cl.user_session.get("messages") or []
+        messages.append({"role": "user", "content": user_input})
+        cl.user_session.set("messages", messages)
+        report_payload = cl.user_session.get("pending_report_payload") or {}
+        use_cases = report_payload.get("use_cases") or []
+        index = int(cl.user_session.get("use_case_feedback_index", 0) or 0)
+        use_case_context = ""
+        if 0 <= index < len(use_cases):
+            current_use_case = use_cases[index]
+            use_case_context = "\n".join(
+                part for part in [
+                    str(current_use_case.get("use_case_name", "")).strip(),
+                    str(current_use_case.get("description", "")).strip(),
+                    str(current_use_case.get("expected_impact", "")).strip(),
+                ] if part
+            )
+
+        resolution = classify_use_case_scope_resolution(user_input, use_case_context, messages)
+        resolution_intent = str(resolution.get("intent", "other")).strip().lower()
+        current_feedback = cl.user_session.get("current_use_case_feedback") or {}
+        existing_comment = str(current_feedback.get("comment", "")).strip()
+        combined_comment = "\n".join(part for part in [existing_comment, user_input] if part).strip()
+        current_feedback["comment"] = combined_comment
+        cl.user_session.set("current_use_case_feedback", current_feedback)
+
+        if resolution_intent == "outside_role":
+            feedback_entries = cl.user_session.get("use_case_feedback_entries") or []
+            feedback_entries.append(current_feedback)
+            cl.user_session.set("use_case_feedback_entries", feedback_entries)
+            return await _advance_use_case_feedback_or_close(
+                send_assistant_message,
+                save_checkpoint,
+                message,
+                messages,
+                report_payload,
+                feedback_entries,
+            )
+
+        if resolution_intent == "low_value":
+            cl.user_session.set("awaiting_use_case_scope_resolution", False)
+            cl.user_session.set("awaiting_use_case_rating", True)
+            rating_prompt = build_use_case_rating_followup()
+            messages.append({"role": "assistant", "content": rating_prompt})
+            cl.user_session.set("messages", messages)
+            await send_assistant_message(rating_prompt)
+            save_checkpoint(message)
+            return True
+
+        retry = "Should I treat this as outside your role and skip scoring it, or as something within your scope but low-value for your day-to-day work?"
+        messages.append({"role": "assistant", "content": retry})
+        cl.user_session.set("messages", messages)
+        await send_assistant_message(retry)
         save_checkpoint(message)
         return True
 
@@ -378,23 +470,13 @@ async def maybe_handle_closure_phase(user_input: str, message, save_checkpoint, 
         feedback_entries = cl.user_session.get("use_case_feedback_entries") or []
         feedback_entries.append(current_feedback)
         cl.user_session.set("use_case_feedback_entries", feedback_entries)
-        cl.user_session.set("current_use_case_feedback", None)
-
-        next_index = int(cl.user_session.get("use_case_feedback_index", 0) or 0) + 1
-        cl.user_session.set("use_case_feedback_index", next_index)
-
-        if next_index < len(use_cases):
-            await send_next_use_case_feedback_prompt(send_assistant_message, messages)
-            save_checkpoint(message)
-            return True
-
-        await _close_from_state(
+        return await _advance_use_case_feedback_or_close(
             send_assistant_message,
+            save_checkpoint,
+            message,
             messages,
-            report_payload=report_payload,
-            use_case_feedback=feedback_entries,
+            report_payload,
+            feedback_entries,
         )
-        save_checkpoint(message)
-        return True
 
     return False

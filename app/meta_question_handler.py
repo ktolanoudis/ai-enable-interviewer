@@ -291,6 +291,55 @@ Rules:
         return "That makes sense. If this mainly belongs to someone else's role, it may not be very relevant for your own work. Would you treat this as low-value for your work, or would you prefer to skip scoring it?"
 
 
+def classify_use_case_scope_resolution(
+    user_message: str,
+    use_case_context: str = "",
+    history: Optional[list] = None,
+) -> dict:
+    recent_history = [
+        {"role": m.get("role"), "content": m.get("content", "")}
+        for m in (history or [])[-8:]
+        if isinstance(m, dict) and m.get("role") in {"user", "assistant"} and m.get("content")
+    ]
+
+    system_prompt = """You classify the user's reply after being asked whether an AI use case is low-value for their own work or outside their role.
+
+Return JSON with:
+- intent: one of "outside_role", "low_value", "other"
+
+Rules:
+- "outside_role" means the user is saying the use case should be skipped because it belongs to another person's or team's responsibilities.
+- "low_value" means the use case is still within scope enough to judge, but they see low usefulness for their day-to-day work.
+- "other" means the user did not resolve that distinction clearly.
+- Use the recent conversation context, not keywords alone.
+- Return only valid JSON.
+"""
+
+    payload = {
+        "use_case_context": use_case_context,
+        "recent_history": recent_history,
+        "user_message": user_message,
+    }
+
+    try:
+        resp = get_client().chat.completions.create(
+            model=MODEL,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": json.dumps(payload)},
+            ],
+            response_format={"type": "json_object"},
+        )
+        data = json.loads(resp.choices[0].message.content or "{}")
+        intent = str(data.get("intent", "")).strip().lower()
+        if intent in {"outside_role", "low_value", "other"}:
+            return {"intent": intent}
+    except Exception:
+        pass
+
+    return {"intent": "other"}
+
+
 def classify_confirmation_response(
     user_message: str,
     prompt_context: str = "",

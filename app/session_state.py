@@ -41,6 +41,7 @@ CHECKPOINT_STATE_KEYS = [
     "pending_report_payload",
     "awaiting_use_case_feedback_consent",
     "awaiting_use_case_opinion",
+    "awaiting_use_case_scope_resolution",
     "awaiting_use_case_rating",
     "use_case_feedback_index",
     "use_case_feedback_entries",
@@ -118,6 +119,7 @@ def init_session_state() -> None:
     cl.user_session.set("pending_report_payload", None)
     cl.user_session.set("awaiting_use_case_feedback_consent", False)
     cl.user_session.set("awaiting_use_case_opinion", False)
+    cl.user_session.set("awaiting_use_case_scope_resolution", False)
     cl.user_session.set("awaiting_use_case_rating", False)
     cl.user_session.set("use_case_feedback_index", 0)
     cl.user_session.set("use_case_feedback_entries", [])
