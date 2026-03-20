@@ -54,8 +54,6 @@ auto_tag_thread = true
 [UI]
 # Name of the app and chatbot.
 name = "AI-Enable Interviewer"
-logo_file_url = "/public/uni-logo.png"
-custom_logo = "/public/uni-logo.png"
 default_theme = "light"
 
 # Show the readme while the thread is empty.

@@ -1,57 +1,15 @@
-"""
-Meta-Question Handler
+"""Model-based message classification and response helpers for the interview flow."""
 
-Detects and responds to clarifying questions, context checks, and conversational signals
-before proceeding with structured interview questions.
-"""
+import json
+from typing import Optional
 
-import re
-from typing import Optional, Tuple
+from ai_client import MODEL, get_client
 
-def is_meta_question(text: str) -> bool:
-    """
-    Detect if user is asking a meta-question about the interview or context.
-    
-    Args:
-        text: User's message
-    
-    Returns:
-        True if this is a meta-question that needs special handling
-    """
-    text_lower = text.lower().strip()
-    
-    # Meta-question patterns
-    meta_patterns = [
-        # Context checks
-        r"do you know (what|who|about)",
-        r"are you (familiar|aware)",
-        r"have you heard of",
-        
-        # Clarification requests
-        r"should i explain",
-        r"do you need (me to|more)",
-        r"would you like (me to|more)",
-        r"how much detail",
-        r"how specific",
-        
-        # Uncertainty signals
-        r"i('m| am) not sure (how to|what|if)",
-        r"i don('t| do not) know (how to|what|if)",
-        r"not sure where to start",
-        
-        # Interview process questions
-        r"what (do you|should i)",
-        r"where should i",
-        r"how should i",
-    ]
-    
-    for pattern in meta_patterns:
-        if re.search(pattern, text_lower):
-            return True
-    
-    return False
-
-def generate_meta_response(user_message: str, current_question_context: str = "") -> Optional[str]:
+def generate_meta_response(
+    user_message: str,
+    current_question_context: str = "",
+    history: Optional[list] = None,
+) -> Optional[str]:
     """
     Generate appropriate response to meta-questions.
     
@@ -62,153 +20,413 @@ def generate_meta_response(user_message: str, current_question_context: str = ""
     Returns:
         Response string, or None if can't handle
     """
-    text_lower = user_message.lower().strip()
-    
-    # "Do you know what [company] does?"
-    if re.search(r"do you know (what|who|about)", text_lower):
-        return """I don't have specific knowledge about your company yet - this is our first conversation! 
-
-Please feel free to explain in your own words. Even if it seems basic to you, it helps me understand the context of your work.
-
-Go ahead and describe your company and your role however makes sense to you."""
-    
-    # "Should I explain...?"
-    if re.search(r"should i explain", text_lower):
-        return """Yes, please explain! Don't assume I know anything about your company or industry. 
-
-The more context you provide, the better I can understand your specific challenges and opportunities."""
-    
-    # "How much detail...?"
-    if re.search(r"how much (detail|specific)", text_lower):
-        return """As much detail as feels natural! 
-
-I'm looking for enough context to understand:
-- What you actually do day-to-day
-- What takes time or feels frustrating
-- What tools or systems you use
-
-You can always start high-level and I'll ask follow-up questions if I need more specifics."""
-    
-    # "I'm not sure / I don't know"
-    if re.search(r"(i('m| am) not sure|i don('t| do not) know)", text_lower):
-        # Check what they're unsure about
-        if "north star" in text_lower or "strategic" in text_lower or "goals" in text_lower:
-            return """No problem! If you don't know the high-level strategic goals, that's totally fine.
-
-Let's skip that and focus on what you DO know - your own work.
-
-Tell me about your role: What's your job title, and what are the main things you do in a typical day or week?"""
-        else:
-            return f"""That's okay! Let's approach this differently.
-
-Instead of {current_question_context}, just tell me in your own words:
-- What's your job?
-- What do you spend most of your time doing?
-- What's frustrating or time-consuming about your work?
-
-There's no wrong answer - I'm just trying to understand your day-to-day."""
-    
-    # "What do you want to know?" / "What should I say?"
-    if re.search(r"what (do you|should i)", text_lower):
-        return """Great question! I'm trying to understand:
-
-**About your role:**
-- What's your position/job title?
-- What department are you in?
-- What are your main responsibilities?
-
-**About your work:**
-- What tasks do you do regularly?
-- What feels slow, repetitive, or frustrating?
-- What tools or systems do you use?
-
-Just start with whatever feels easiest to explain, and I'll ask follow-up questions from there."""
-    
-    return None
-
-def is_correction_signal(text: str) -> bool:
-    """
-    Detect if user is correcting/disagreeing with something.
-    
-    Args:
-        text: User's message
-    
-    Returns:
-        True if user is saying information is wrong
-    """
-    text_lower = text.lower().strip()
-    
-    correction_phrases = [
-        "no that's not",
-        "no this is not",
-        "that's wrong",
-        "that's incorrect",
-        "not my company",
-        "wrong company",
-        "that's not right",
-        "not correct",
-        "different company",
-        "not us",
+    recent_history = [
+        {"role": m.get("role"), "content": m.get("content", "")}
+        for m in (history or [])[-8:]
+        if isinstance(m, dict) and m.get("role") in {"user", "assistant"} and m.get("content")
     ]
-    
-    # Check if starts with "no" and contains negative words
-    starts_with_no = text_lower.startswith("no")
-    has_negative = any(word in text_lower for word in ["not", "wrong", "incorrect", "different"])
-    
-    return any(phrase in text_lower for phrase in correction_phrases) or (starts_with_no and has_negative)
 
-def is_uncertainty_signal(text: str) -> bool:
-    """
-    Detect if user is expressing uncertainty or confusion.
-    
-    Args:
-        text: User's message
-    
-    Returns:
-        True if user seems stuck or confused
-    """
-    text_lower = text.lower().strip()
-    
-    uncertainty_phrases = [
-        "i have no idea",
-        "i don't know",
-        "i'm not sure",
-        "no clue",
-        "not sure",
-        "unclear",
-        "confused",
-        "don't understand",
+    system_prompt = """You are helping with a live interview.
+
+The user just asked a clarification or process question. Answer briefly and contextually based on the most recent assistant question and conversation history.
+
+Rules:
+- Do not restart the interview.
+- Do not give a generic onboarding explanation unless the history truly lacks context.
+- Answer the user's clarification directly.
+- If the user asks what you mean, explain the immediately previous assistant question in plain language.
+- End by gently restating the current question or giving one concrete way they can answer it.
+- Keep it concise: 2-5 sentences.
+"""
+
+    payload = {
+        "current_question_context": current_question_context,
+        "recent_history": recent_history,
+        "user_message": user_message,
+    }
+
+    try:
+        resp = get_client().chat.completions.create(
+            model=MODEL,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": json.dumps(payload)},
+            ],
+        )
+        content = (resp.choices[0].message.content or "").strip()
+        return content or None
+    except Exception:
+        return "I mean the question I just asked in a practical sense. A short, simple answer is enough."
+
+
+def classify_message_intent(
+    user_message: str,
+    current_question_context: str = "",
+    history: Optional[list] = None,
+) -> dict:
+    recent_history = [
+        {"role": m.get("role"), "content": m.get("content", "")}
+        for m in (history or [])[-8:]
+        if isinstance(m, dict) and m.get("role") in {"user", "assistant"} and m.get("content")
     ]
-    
-    return any(phrase in text_lower for phrase in uncertainty_phrases)
 
-def should_skip_question(user_message: str, current_question_type: str) -> Tuple[bool, Optional[str]]:
-    """
-    Determine if we should skip the current question and adapt.
-    
-    Args:
-        user_message: User's response
-        current_question_type: Type of question asked ("north_star", "role", "tasks", etc.)
-    
-    Returns:
-        (should_skip, alternative_question)
-    """
-    
-    if not is_uncertainty_signal(user_message):
-        return False, None
-    
-    # User doesn't know North Star - skip it
-    if current_question_type == "north_star":
-        return True, """No problem! Many people don't know the high-level strategy.
+    system_prompt = """You classify the user's latest message in a live interview.
 
-Let's focus on your own work instead.
+Return JSON with:
+- intent: one of "answer", "clarification", "uncertain", "correction"
 
-**What's your job title and what department are you in?**"""
-    
-    # User doesn't know their role/department (unlikely but handle it)
-    if current_question_type == "role":
-        return True, """Okay, let's start even simpler.
+Rules:
+- "clarification" means the user is asking what the previous question means or how to answer it.
+- "uncertain" means the user cannot answer, does not know, wants to move on, or is stuck.
+- "correction" means the user is directly saying previously stated information is wrong.
+- "answer" means a normal substantive answer, even if short.
+- Use the recent conversation context, not just keywords.
+- Return only valid JSON.
+"""
 
-**What do you do for work? What are the main things you're responsible for?**"""
-    
-    return False, None
+    payload = {
+        "current_question_context": current_question_context,
+        "recent_history": recent_history,
+        "user_message": user_message,
+    }
+
+    try:
+        resp = get_client().chat.completions.create(
+            model=MODEL,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": json.dumps(payload)},
+            ],
+            response_format={"type": "json_object"},
+        )
+        data = json.loads(resp.choices[0].message.content or "{}")
+        intent = str(data.get("intent", "")).strip().lower()
+        if intent in {"answer", "clarification", "uncertain", "correction"}:
+            return {"intent": intent}
+    except Exception:
+        pass
+
+    return {"intent": "answer"}
+
+
+def classify_use_case_feedback_response(
+    user_message: str,
+    use_case_context: str = "",
+    history: Optional[list] = None,
+) -> dict:
+    recent_history = [
+        {"role": m.get("role"), "content": m.get("content", "")}
+        for m in (history or [])[-8:]
+        if isinstance(m, dict) and m.get("role") in {"user", "assistant"} and m.get("content")
+    ]
+
+    system_prompt = """You classify the user's latest message during an AI use-case feedback step.
+
+Return JSON with:
+- intent: one of "opinion", "clarification", "uncertain", "structural_feedback", "scope_mismatch"
+
+Rules:
+- "opinion" means the user gave a practical reaction to the use case and the interview can move on to the rating question.
+- "clarification" means the user is asking how the proposed use case would work, what it means, what data/model it would use, or otherwise needs explanation before giving feedback.
+- "uncertain" means the user cannot judge it, does not know, or cannot answer yet.
+- "structural_feedback" means the user is commenting on how the proposed use cases should be combined, split, reordered, or otherwise reframed before rating this one.
+- "scope_mismatch" means the user is saying this use case mainly belongs to another role, team, or owner, so it is not really part of their work.
+- If the message contains both a positive/negative reaction and a follow-up question that still needs answering, classify it as "clarification".
+- If the message mainly says this use case overlaps with another, should be merged, is redundant, or needs reframing, classify it as "structural_feedback".
+- If the message mainly says this task belongs to a manager or another person/team, classify it as "scope_mismatch".
+- Use the recent conversation and use case context, not keywords alone.
+- Return only valid JSON.
+"""
+
+    payload = {
+        "use_case_context": use_case_context,
+        "recent_history": recent_history,
+        "user_message": user_message,
+    }
+
+    try:
+        resp = get_client().chat.completions.create(
+            model=MODEL,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": json.dumps(payload)},
+            ],
+            response_format={"type": "json_object"},
+        )
+        data = json.loads(resp.choices[0].message.content or "{}")
+        intent = str(data.get("intent", "")).strip().lower()
+        if intent in {"opinion", "clarification", "uncertain", "structural_feedback", "scope_mismatch"}:
+            return {"intent": intent}
+    except Exception:
+        pass
+
+    return {"intent": "opinion"}
+
+
+def generate_use_case_feedback_clarification(
+    user_message: str,
+    use_case_context: str = "",
+    history: Optional[list] = None,
+) -> Optional[str]:
+    recent_history = [
+        {"role": m.get("role"), "content": m.get("content", "")}
+        for m in (history or [])[-8:]
+        if isinstance(m, dict) and m.get("role") in {"user", "assistant"} and m.get("content")
+    ]
+
+    system_prompt = """You are helping in an interview where the user is reviewing a proposed AI use case.
+
+The user asked a clarification question about how the use case would work.
+
+Rules:
+- Answer the user's clarification directly and concretely.
+- Ground the answer in the proposed use case and the user's job context from the recent history.
+- Do not claim implementation details as certain if they were not specified; present them as a plausible approach.
+- Keep it concise: 2-5 sentences.
+- End by inviting the user to give their practical reaction to the use case.
+"""
+
+    payload = {
+        "use_case_context": use_case_context,
+        "recent_history": recent_history,
+        "user_message": user_message,
+    }
+
+    try:
+        resp = get_client().chat.completions.create(
+            model=MODEL,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": json.dumps(payload)},
+            ],
+        )
+        content = (resp.choices[0].message.content or "").strip()
+        return content or None
+    except Exception:
+        return "A practical version of this would usually use your existing data and workflow tools rather than requiring a fully custom system from scratch. Based on that, how useful does this seem for your work in practice?"
+
+
+def generate_use_case_feedback_structural_followup(
+    user_message: str,
+    use_case_context: str = "",
+    history: Optional[list] = None,
+) -> Optional[str]:
+    recent_history = [
+        {"role": m.get("role"), "content": m.get("content", "")}
+        for m in (history or [])[-8:]
+        if isinstance(m, dict) and m.get("role") in {"user", "assistant"} and m.get("content")
+    ]
+
+    system_prompt = """You are helping in an interview where the user is reviewing proposed AI use cases.
+
+The user gave structural feedback, such as saying this use case overlaps with another one or should be merged/reframed.
+
+Rules:
+- Acknowledge the structural feedback directly.
+- Do not dismiss it or immediately ask for a rating.
+- Ask one short follow-up question that helps capture the user's reasoning in a practical way.
+- Keep it concise: 2-4 sentences.
+- The final sentence should be exactly one concrete follow-up question.
+"""
+
+    payload = {
+        "use_case_context": use_case_context,
+        "recent_history": recent_history,
+        "user_message": user_message,
+    }
+
+    try:
+        resp = get_client().chat.completions.create(
+            model=MODEL,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": json.dumps(payload)},
+            ],
+        )
+        content = (resp.choices[0].message.content or "").strip()
+        return content or None
+    except Exception:
+        return "That makes sense. It sounds like you see overlap between these ideas rather than two separate workflows. What part of them feels duplicated to you?"
+
+
+def generate_use_case_feedback_scope_followup(
+    user_message: str,
+    use_case_context: str = "",
+    history: Optional[list] = None,
+) -> Optional[str]:
+    recent_history = [
+        {"role": m.get("role"), "content": m.get("content", "")}
+        for m in (history or [])[-8:]
+        if isinstance(m, dict) and m.get("role") in {"user", "assistant"} and m.get("content")
+    ]
+
+    system_prompt = """You are helping in an interview where the user is reviewing proposed AI use cases.
+
+The user is saying this use case mainly belongs to someone else's role or team.
+
+Rules:
+- Acknowledge that scope/ownership matters.
+- Keep it concise: 2-4 sentences.
+- Do not argue with the user.
+- End with one concrete question that helps capture whether the use case should be treated as low-value for this user's own work or skipped because it is outside their role.
+"""
+
+    payload = {
+        "use_case_context": use_case_context,
+        "recent_history": recent_history,
+        "user_message": user_message,
+    }
+
+    try:
+        resp = get_client().chat.completions.create(
+            model=MODEL,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": json.dumps(payload)},
+            ],
+        )
+        content = (resp.choices[0].message.content or "").strip()
+        return content or None
+    except Exception:
+        return "That makes sense. If this mainly belongs to someone else's role, it may not be very relevant for your own work. Would you treat this as low-value for your work, or would you prefer to skip scoring it?"
+
+
+def classify_confirmation_response(
+    user_message: str,
+    prompt_context: str = "",
+    history: Optional[list] = None,
+) -> dict:
+    recent_history = [
+        {"role": m.get("role"), "content": m.get("content", "")}
+        for m in (history or [])[-8:]
+        if isinstance(m, dict) and m.get("role") in {"user", "assistant"} and m.get("content")
+    ]
+
+    system_prompt = """You classify the user's reply to a confirmation-style interview prompt.
+
+Return JSON with:
+- intent: one of "yes", "no", "correction", "other"
+
+Rules:
+- "yes" means clear agreement, confirmation, or willingness to continue.
+- "no" means clear refusal, decline, skip, or desire to finish without continuing that step.
+- "correction" means the user is saying previously stated information is wrong and needs to be replaced.
+- "other" means the user gave extra content instead of a clear yes/no.
+- Use the prompt context and recent history, not exact keywords alone.
+- Return only valid JSON.
+"""
+
+    payload = {
+        "prompt_context": prompt_context,
+        "recent_history": recent_history,
+        "user_message": user_message,
+    }
+
+    try:
+        resp = get_client().chat.completions.create(
+            model=MODEL,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": json.dumps(payload)},
+            ],
+            response_format={"type": "json_object"},
+        )
+        data = json.loads(resp.choices[0].message.content or "{}")
+        intent = str(data.get("intent", "")).strip().lower()
+        if intent in {"yes", "no", "correction", "other"}:
+            return {"intent": intent}
+    except Exception:
+        pass
+
+    return {"intent": "other"}
+
+
+def classify_answer_completeness(
+    user_message: str,
+    current_question_context: str = "",
+    history: Optional[list] = None,
+) -> dict:
+    recent_history = [
+        {"role": m.get("role"), "content": m.get("content", "")}
+        for m in (history or [])[-8:]
+        if isinstance(m, dict) and m.get("role") in {"user", "assistant"} and m.get("content")
+    ]
+
+    system_prompt = """You classify whether the user's latest interview answer is too brief to be useful.
+
+Return JSON with:
+- intent: one of "sufficient", "too_short"
+
+Rules:
+- Consider the latest question and recent conversation context.
+- A short answer can still be "sufficient" if it clearly answers the question.
+- Use "too_short" only when the answer is too vague or underspecified to move the interview forward.
+- Return only valid JSON.
+"""
+
+    payload = {
+        "current_question_context": current_question_context,
+        "recent_history": recent_history,
+        "user_message": user_message,
+    }
+
+    try:
+        resp = get_client().chat.completions.create(
+            model=MODEL,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": json.dumps(payload)},
+            ],
+            response_format={"type": "json_object"},
+        )
+        data = json.loads(resp.choices[0].message.content or "{}")
+        intent = str(data.get("intent", "")).strip().lower()
+        if intent in {"sufficient", "too_short"}:
+            return {"intent": intent}
+    except Exception:
+        pass
+    return {"intent": "sufficient"}
+
+
+def generate_uncertainty_recovery(
+    user_message: str,
+    current_question_context: str = "",
+    history: Optional[list] = None,
+) -> Optional[str]:
+    recent_history = [
+        {"role": m.get("role"), "content": m.get("content", "")}
+        for m in (history or [])[-8:]
+        if isinstance(m, dict) and m.get("role") in {"user", "assistant"} and m.get("content")
+    ]
+
+    system_prompt = """You are helping with a live interview.
+
+The user could not answer the latest question. Respond naturally and briefly.
+
+Rules:
+- Start by acknowledging that it is okay not to know.
+- Do not repeat the exact same question.
+- Ask one easier adjacent question based on the most recent assistant question.
+- Keep the interview moving forward.
+- Keep it concise: 2-4 sentences.
+- The final sentence should contain exactly one concrete follow-up question.
+"""
+
+    payload = {
+        "current_question_context": current_question_context,
+        "recent_history": recent_history,
+        "user_message": user_message,
+    }
+
+    try:
+        resp = get_client().chat.completions.create(
+            model=MODEL,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": json.dumps(payload)},
+            ],
+        )
+        content = (resp.choices[0].message.content or "").strip()
+        return content or None
+    except Exception:
+        return "That's okay, we can move on to the next question.\n\nCould you tell me about the closest related part of your work instead?"

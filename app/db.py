@@ -57,6 +57,74 @@ def _sqlite_ensure_column(conn: sqlite3.Connection, table: str, column: str, ddl
     cur.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl_type}")
 
 
+def _normalize_use_case_feedback_key(name: str) -> str:
+    return " ".join(str(name or "").strip().lower().split())
+
+
+def _merge_validated_use_case_feedback(existing_items: Optional[List], new_items: Optional[List]) -> List[Dict]:
+    merged: Dict[str, Dict] = {}
+
+    def _coerce_entry(item: Dict) -> Optional[Dict]:
+        if not isinstance(item, dict):
+            return None
+        use_case_name = str(item.get("use_case_name", "")).strip()
+        if not use_case_name:
+            return None
+
+        comments = item.get("comments")
+        if not isinstance(comments, list):
+            comments = []
+
+        rating_count = int(item.get("rating_count", 0) or 0)
+        rating_sum = float(item.get("rating_sum", 0) or 0)
+        average_rating = round(rating_sum / rating_count, 2) if rating_count > 0 else None
+
+        return {
+            "use_case_name": use_case_name,
+            "latest_description": str(item.get("latest_description", "")).strip(),
+            "rating_count": rating_count,
+            "rating_sum": rating_sum,
+            "average_rating": average_rating,
+            "support_count": int(item.get("support_count", 0) or 0),
+            "concern_count": int(item.get("concern_count", 0) or 0),
+            "comments": comments,
+            "last_updated": item.get("last_updated"),
+        }
+
+    def _apply(item: Dict) -> None:
+        entry = _coerce_entry(item)
+        if not entry:
+            return
+
+        key = _normalize_use_case_feedback_key(entry["use_case_name"])
+        if key not in merged:
+            merged[key] = entry
+            return
+
+        current = merged[key]
+        current["rating_count"] += entry["rating_count"]
+        current["rating_sum"] += entry["rating_sum"]
+        current["average_rating"] = (
+            round(current["rating_sum"] / current["rating_count"], 2)
+            if current["rating_count"] > 0
+            else None
+        )
+        current["support_count"] += entry["support_count"]
+        current["concern_count"] += entry["concern_count"]
+        if entry.get("latest_description"):
+            current["latest_description"] = entry["latest_description"]
+        if isinstance(entry.get("comments"), list):
+            current["comments"].extend(entry["comments"])
+        current["last_updated"] = entry.get("last_updated") or current.get("last_updated")
+
+    for item in existing_items or []:
+        _apply(item)
+    for item in new_items or []:
+        _apply(item)
+
+    return list(merged.values())
+
+
 def init_db():
     if _is_mongo_enabled():
         client, sessions_col, insights_col = _mongo_collections()
@@ -201,7 +269,7 @@ def update_company_insights(
             if use_cases:
                 merged_use_cases.extend(use_cases)
             if validated_use_cases:
-                merged_validated = list(validated_use_cases)
+                merged_validated = _merge_validated_use_case_feedback(merged_validated, validated_use_cases)
 
             new_doc = {
                 "company": company,
@@ -245,8 +313,9 @@ def update_company_insights(
             params.append(json.dumps(existing_uc))
 
         if validated_use_cases:
+            existing_validated = json.loads(existing[7]) if existing[7] else []
             updates.append("validated_use_cases = ?")
-            params.append(json.dumps(validated_use_cases))
+            params.append(json.dumps(_merge_validated_use_case_feedback(existing_validated, validated_use_cases)))
 
         updates.append("total_interviews = total_interviews + 1")
         updates.append("last_updated = ?")

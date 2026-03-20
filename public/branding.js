@@ -1,10 +1,14 @@
 (function () {
+  var FAVICON_ICON = '/public/favicon-icon.png';
+  var lastFavicon = null;
+
   function setTitle() {
     document.title = 'AI-Enable Interviewer';
   }
 
   function setFavicon() {
-    var href = '/public/avatar-logo.png?v=' + Date.now();
+    var href = FAVICON_ICON;
+    if (href === lastFavicon) return;
     var rels = ['icon', 'shortcut icon', 'apple-touch-icon'];
     rels.forEach(function (rel) {
       var link = document.querySelector('link[rel="' + rel + '"]');
@@ -16,15 +20,19 @@
       link.type = 'image/png';
       link.href = href;
     });
+    lastFavicon = href;
+  }
+
+  function applyBranding() {
+    setTitle();
+    setFavicon();
   }
 
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', function () {
-      setTitle();
-      setFavicon();
+      applyBranding();
     });
   } else {
-    setTitle();
-    setFavicon();
+    applyBranding();
   }
 })();

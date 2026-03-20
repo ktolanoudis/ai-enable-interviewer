@@ -1,8 +1,3 @@
-<div style="display:flex; gap:16px; align-items:center; justify-content:center; margin: 6px 0 16px 0;">
-  <img src="/public/uni-logo.png" alt="University logo" style="height:42px;" />
-  <img src="/public/lab-logo.png" alt="Lab logo" style="height:42px;" />
-</div>
-
 # Welcome!
 
 ---

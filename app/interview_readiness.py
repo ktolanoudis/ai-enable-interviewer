@@ -4,30 +4,6 @@ def is_answer_too_short(text: str) -> bool:
     return len(words) < 3
 
 
-def is_yes(text: str) -> bool:
-    t = text.strip().lower()
-    return t.startswith(("y", "yes", "ok", "okay", "sure", "yep", "yeah"))
-
-
-def is_no(text: str) -> bool:
-    t = text.strip().lower()
-    if t in {"n", "no", "nope", "nah"}:
-        return True
-    if t.startswith(("no ", "no,", "no.", "no!", "nope", "nah")):
-        return True
-    return any(
-        phrase in t
-        for phrase in {
-            "that covers it",
-            "nothing else",
-            "no more",
-            "all good",
-            "that's all",
-            "thats all",
-        }
-    )
-
-
 def _as_list(value):
     return value if isinstance(value, list) else []
 

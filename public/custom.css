@@ -1,28 +1,14 @@
-/* Force avatar visuals to use /public/avatar-logo.png */
-.MuiAvatar-root,
-[class*="Avatar-root"],
-[data-testid="avatar"] {
-  background-image: url("/public/avatar-logo.png") !important;
-  background-size: cover !important;
-  background-position: center !important;
-  background-repeat: no-repeat !important;
+img[src*="/avatars/interviewer"] {
+  opacity: 1 !important;
+  filter: none !important;
 }
 
-.MuiAvatar-root svg,
-.MuiAvatar-root img,
-[class*="Avatar-root"] svg,
-[class*="Avatar-root"] img,
-[data-testid="avatar"] svg,
-[data-testid="avatar"] img {
-  opacity: 0 !important;
-}
 
 /* Persistent corner logos */
 body::before {
   content: "" !important;
   display: block !important;
   position: fixed !important;
-  /* midpoint between left viewport edge and left chatbox edge */
   left: calc((100vw - min(960px, 100vw - 32px)) / 4) !important;
   bottom: 16px !important;
   width: 220px !important;
@@ -37,7 +23,6 @@ body::after {
   content: "" !important;
   display: block !important;
   position: fixed !important;
-  /* midpoint between right viewport edge and right chatbox edge */
   right: calc((100vw - min(960px, 100vw - 32px)) / 4) !important;
   bottom: 16px !important;
   width: 260px !important;
@@ -48,7 +33,6 @@ body::after {
   transform: translateX(50%) !important;
 }
 
-/* Dark theme: use white logo variants for visibility. */
 @media (prefers-color-scheme: dark) {
   body::before {
     background-image: url("/public/uni-logo-light.png") !important;

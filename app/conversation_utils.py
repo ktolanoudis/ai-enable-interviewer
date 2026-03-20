@@ -45,10 +45,7 @@ def avoid_immediate_question_repeat(response: str, messages: list) -> str:
         return response
 
     if response.strip().lower() == last_assistant.strip().lower():
-        return (
-            "No problem. Even roughly, what happens right before the call, during the call, "
-            "and right after the call with a potential provider?"
-        )
+        return "No problem. Even roughly, could you walk me through that step by step?"
 
     return response
 

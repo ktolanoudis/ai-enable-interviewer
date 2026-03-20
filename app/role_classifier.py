@@ -74,23 +74,3 @@ def should_ask_north_star(seniority: SeniorityLevel, has_existing_north_star: bo
     
     # Ask executives and senior people
     return seniority in [SeniorityLevel.EXECUTIVE, SeniorityLevel.SENIOR]
-
-def should_validate_use_cases(seniority: SeniorityLevel, interview_count: int) -> bool:
-    """
-    Determine if should show previous use cases for validation
-    
-    Args:
-        seniority: Employee seniority level
-        interview_count: Number of previous interviews for this company
-    
-    Returns:
-        True if should show use cases for feedback
-    """
-    # Only show if there are previous interviews
-    if interview_count == 0:
-        return False
-    
-    # Executives and senior people can validate strategic use cases
-    # Intermediate can validate tactical use cases
-    # Junior/Intern should NOT be asked to validate (they lack context)
-    return seniority in [SeniorityLevel.EXECUTIVE, SeniorityLevel.SENIOR, SeniorityLevel.INTERMEDIATE]
