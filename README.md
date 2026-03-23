@@ -4,20 +4,20 @@ A multi‑stakeholder conversational AI system that discovers, analyzes, and pri
 
 The system conducts structured interviews with employees across different roles and departments, extracts operational tasks and bottlenecks, and generates a prioritized portfolio of AI use cases aligned with business goals.
 
----
+\---
 
 # Quick Start
 
 Requirements
 
-- Python 3.13+
-- OpenAI API key (or LiteLLM proxy)
+* Python 3.13+
+* OpenAI API key (or LiteLLM proxy)
 
 Clone the repository
 
 ```bash
 git clone https://github.com/ktolanoudis/ai-enable-interviewer.git
-cd discovery
+cd ai-enable-interviewer
 ```
 
 Create virtual environment
@@ -42,13 +42,13 @@ cp .env.example .env
 Add your API key:
 
 ```bash
-OPENAI_API_KEY=sk-...
+OPENAI\_API\_KEY=sk-...
 ```
 
 Run the application
 
 ```bash
-chainlit run app/chainlit_app.py -w --port 8000
+chainlit run app/chainlit\_app.py -w --port 8000
 ```
 
 Open your browser:
@@ -57,7 +57,7 @@ Open your browser:
 http://localhost:8000
 ```
 
----
+\---
 
 # Docker Deployment
 
@@ -89,11 +89,11 @@ This pulls the latest `main`, rebuilds the image locally, and restarts the app v
 
 Configure these GitHub repository secrets and enable `.github/workflows/deploy-from-source.yml`:
 
-- `DEPLOY_HOST` (server IP or hostname)
-- `DEPLOY_PORT` (optional, default `22`)
-- `DEPLOY_USER` (SSH user)
-- `DEPLOY_PATH` (absolute path to cloned repo on server)
-- `DEPLOY_SSH_KEY` (private key with access to that server)
+* `DEPLOY\_HOST` (server IP or hostname)
+* `DEPLOY\_PORT` (optional, default `22`)
+* `DEPLOY\_USER` (SSH user)
+* `DEPLOY\_PATH` (absolute path to cloned repo on server)
+* `DEPLOY\_SSH\_KEY` (private key with access to that server)
 
 The workflow SSHes into the server and runs:
 
@@ -101,7 +101,7 @@ The workflow SSHes into the server and runs:
 BRANCH=main ./scripts/deploy-prod.sh
 ```
 
----
+\---
 
 # Overview
 
@@ -111,15 +111,15 @@ One major challenge is identifying **high-impact and feasible AI opportunities w
 
 This system solves that problem by combining:
 
-- structured discovery interviews
-- role-aware questioning
-- cross-stakeholder knowledge aggregation
-- automated AI opportunity analysis
-- feasibility and value scoring
+* structured discovery interviews
+* role-aware questioning
+* cross-stakeholder knowledge aggregation
+* automated AI opportunity analysis
+* feasibility and value scoring
 
 Instead of analyzing processes externally, the system collects **first-hand operational insights directly from employees** and converts them into structured AI opportunities.
 
----
+\---
 
 # Key Features
 
@@ -144,15 +144,15 @@ Daily tasks and friction points.
 
 The system stores insights from previous interviews and uses them to:
 
-- avoid repeating questions
-- validate AI use cases
-- accumulate organizational knowledge
+* avoid repeating questions
+* validate AI use cases
+* accumulate organizational knowledge
 
 ## Automatic Company Context
 
 The system automatically retrieves company information from the web and asks the user to confirm it before continuing.
 
----
+\---
 
 # AI Opportunity Discovery Framework
 
@@ -170,7 +170,7 @@ Define measurable success metrics.
 STEP 5 — Feasibility Evaluation  
 Evaluate each use case based on data, regulatory constraints, and technical complexity.
 
----
+\---
 
 # Outputs
 
@@ -184,27 +184,27 @@ Human-readable AI opportunity report.
 
 Reports include:
 
-- Executive summary
-- Task inventory
-- AI use case recommendations
-- Value–feasibility prioritization
-- Implementation recommendations
+* Executive summary
+* Task inventory
+* AI use case recommendations
+* Value–feasibility prioritization
+* Implementation recommendations
 
----
+\---
 
 # Data Storage
 
 Database
 
-- SQLite (default)
-- MongoDB (optional)
+* SQLite (default)
+* MongoDB (optional)
 
 Report Storage
 
-- Local filesystem
-- S3-compatible object storage
+* Local filesystem
+* S3-compatible object storage
 
----
+\---
 
 # Example Use Cases
 
@@ -220,7 +220,7 @@ Identify automation opportunities across departments.
 Investment Due Diligence  
 Assess AI potential in portfolio companies.
 
----
+\---
 
 # Contact
 
@@ -228,3 +228,4 @@ Konstantinos Tolanoudis
 ETH Zurich
 
 ktolanoudis@ethz.ch
+
