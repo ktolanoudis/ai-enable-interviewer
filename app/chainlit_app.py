@@ -74,6 +74,30 @@ async def ensure_anonymous_client_cookie(request: Request, call_next):
     return response
 
 
+def _has_restore_suppression_cookie() -> bool:
+    try:
+        current = getattr(getattr(cl, "context", None), "session", None)
+        if current is None:
+            return False
+        cookie_header = None
+        environ = getattr(current, "environ", None)
+        if isinstance(environ, dict):
+            cookie_header = environ.get("HTTP_COOKIE") or environ.get("cookie")
+        if not cookie_header:
+            headers = getattr(current, "headers", None)
+            if headers is not None:
+                getter = getattr(headers, "get", None)
+                if callable(getter):
+                    cookie_header = getter("cookie") or getter("Cookie")
+                elif isinstance(headers, dict):
+                    cookie_header = headers.get("cookie") or headers.get("Cookie")
+        if not cookie_header:
+            return False
+        return "suppress_draft_restore=1" in str(cookie_header)
+    except Exception:
+        return False
+
+
 def _company_setup_needs_resume() -> bool:
     if not cl.user_session.get("company_setup_in_progress"):
         return False
@@ -123,7 +147,8 @@ async def start():
     # If this thread already has a checkpoint, restore instead of resetting.
     owner = ensure_owner_fingerprint()
     draft_id = active_draft_id()
-    if await _restore_checkpoint_if_available(draft_id=draft_id, owner=owner, allow_fallback=False):
+    allow_fallback = not _has_restore_suppression_cookie()
+    if await _restore_checkpoint_if_available(draft_id=draft_id, owner=owner, allow_fallback=allow_fallback):
         return
 
     existing_messages = cl.user_session.get("messages") or []
