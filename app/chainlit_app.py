@@ -88,12 +88,12 @@ def _company_setup_needs_resume() -> bool:
     return True
 
 
-async def _restore_checkpoint_if_available(draft_id: str = "", owner: str = "") -> bool:
+async def _restore_checkpoint_if_available(draft_id: str = "", owner: str = "", allow_fallback: bool = False) -> bool:
     if cl.user_session.get("checkpoint_restored_this_connection"):
         return True
 
     checkpoint = get_interview_checkpoint(draft_id) if draft_id else None
-    if not checkpoint and owner:
+    if not checkpoint and owner and allow_fallback:
         checkpoint = fallback_open_draft_checkpoint(owner)
     if not checkpoint or not restore_checkpoint_to_session(checkpoint):
         return False
@@ -123,7 +123,7 @@ async def start():
     # If this thread already has a checkpoint, restore instead of resetting.
     owner = ensure_owner_fingerprint()
     draft_id = active_draft_id()
-    if await _restore_checkpoint_if_available(draft_id=draft_id, owner=owner):
+    if await _restore_checkpoint_if_available(draft_id=draft_id, owner=owner, allow_fallback=False):
         return
 
     existing_messages = cl.user_session.get("messages") or []
@@ -161,7 +161,7 @@ async def resume(thread: dict):
 
     owner = ensure_owner_fingerprint()
     thread_id = active_draft_id(thread=thread)
-    await _restore_checkpoint_if_available(draft_id=thread_id, owner=owner)
+    await _restore_checkpoint_if_available(draft_id=thread_id, owner=owner, allow_fallback=True)
 
 
 async def _send_stop_addendum_reminder(stop_token: int):
