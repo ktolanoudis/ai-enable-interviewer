@@ -1,3 +1,8 @@
+import json
+
+from ai_client import MODEL, get_client
+
+
 def get_interview_strategy_description(seniority: str) -> str:
     """Get description of what this seniority level contributes."""
     descriptions = {
@@ -48,6 +53,53 @@ def avoid_immediate_question_repeat(response: str, messages: list) -> str:
         return "No problem. Even roughly, could you walk me through that step by step?"
 
     return response
+
+
+def paraphrase_repeated_question(response: str, messages: list, fallback: str = "") -> str:
+    """Paraphrase a repeated assistant question so loops sound less robotic."""
+    if not isinstance(response, str) or not response.strip():
+        return fallback or response
+
+    assistant_messages = [
+        str(m.get("content", "")).strip()
+        for m in (messages or [])
+        if isinstance(m, dict) and m.get("role") == "assistant" and str(m.get("content", "")).strip()
+    ]
+    if not assistant_messages:
+        return response
+
+    response_norm = response.strip().lower()
+    if response_norm not in {msg.lower() for msg in assistant_messages[-3:]}:
+        return response
+
+    payload = {
+        "question": response,
+        "recent_assistant_messages": assistant_messages[-4:],
+    }
+    system_prompt = """You paraphrase an interview question so it does not sound repeated.
+
+Rules:
+- Preserve the meaning.
+- Keep it concise and natural.
+- Do not add new requirements or new questions.
+- Return one short paraphrased prompt only.
+"""
+
+    try:
+        resp = get_client().chat.completions.create(
+            model=MODEL,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": json.dumps(payload)},
+            ],
+        )
+        content = (resp.choices[0].message.content or "").strip()
+        if content and content.lower() != response_norm:
+            return content
+    except Exception:
+        pass
+
+    return fallback or response
 
 
 def normalize_framework_step(step: str) -> str:

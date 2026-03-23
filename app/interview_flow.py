@@ -1,6 +1,6 @@
 import chainlit as cl
 
-from conversation_utils import build_analysis_transcript
+from conversation_utils import build_analysis_transcript, paraphrase_repeated_question
 from feedback_flow import (
     begin_use_case_feedback,
     build_use_case_feasibility_prompt,
@@ -234,9 +234,26 @@ async def maybe_handle_closure_phase(user_input: str, message, save_checkpoint, 
             save_checkpoint(message)
             return True
 
+        if len(str(user_input or "").split()) >= 8:
+            follow_up = paraphrase_repeated_question(
+                "Thank you, that's very helpful. Before I close, is there anything else you'd like to add?",
+                messages,
+                fallback="Thanks, that adds useful context. If there is one last point you want included before the final review step, add it now. Otherwise just say no.",
+            )
+            messages.append({"role": "assistant", "content": follow_up})
+            cl.user_session.set("messages", messages)
+            await send_assistant_message(follow_up)
+            save_checkpoint(message)
+            return True
+
         follow_up = (
             "Thank you, that's very helpful. "
             "Before I close, is there anything else you'd like to add?"
+        )
+        follow_up = paraphrase_repeated_question(
+            follow_up,
+            messages,
+            fallback="If there is anything else you want included before the final review step, tell me now. Otherwise just say no.",
         )
         messages.append({"role": "assistant", "content": follow_up})
         cl.user_session.set("messages", messages)
@@ -268,6 +285,11 @@ async def maybe_handle_closure_phase(user_input: str, message, save_checkpoint, 
             return True
 
         retry = "Please answer yes if you'd like to review the suggested AI use cases, or no if you'd prefer to finish now."
+        retry = paraphrase_repeated_question(
+            retry,
+            messages,
+            fallback="You can say yes to review the suggested AI use cases, or no if you'd prefer to finish now.",
+        )
         messages.append({"role": "assistant", "content": retry})
         cl.user_session.set("messages", messages)
         await send_assistant_message(retry)
@@ -468,6 +490,11 @@ async def maybe_handle_closure_phase(user_input: str, message, save_checkpoint, 
         parsed_rating = parse_use_case_rating(user_input)
         if parsed_rating is None:
             retry = "Please rate this use case from 1 to 5, or type 'skip' if you do not want to score it."
+            retry = paraphrase_repeated_question(
+                retry,
+                messages,
+                fallback="Please give this use case a rating from 1 to 5, or say skip if you do not want to score it.",
+            )
             messages.append({"role": "assistant", "content": retry})
             cl.user_session.set("messages", messages)
             await send_assistant_message(retry)
