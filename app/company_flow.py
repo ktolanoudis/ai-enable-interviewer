@@ -142,10 +142,30 @@ async def run_company_setup(save_checkpoint, message: cl.Message = None) -> None
         await start_interview_without_company_context(save_checkpoint, message)
         return
 
+    if (
+        cl.user_session.get("company_context_confirmed")
+        or cl.user_session.get("awaiting_company_confirmation")
+        or cl.user_session.get("awaiting_company_description")
+        or cl.user_session.get("awaiting_company_description_confirmation")
+    ):
+        return
+
+    setup_token = int(cl.user_session.get("company_setup_token") or 0) + 1
+    cl.user_session.set("company_setup_token", setup_token)
     cl.user_session.set("company_setup_in_progress", True)
     try:
         await send_assistant_message("Let me review your company website and check other online sources...")
         company_info = research_company(company, company_website=metadata.get("company_website"), use_ai=True)
+
+        if int(cl.user_session.get("company_setup_token") or 0) != setup_token:
+            return
+        if (
+            cl.user_session.get("company_context_confirmed")
+            or cl.user_session.get("awaiting_company_confirmation")
+            or cl.user_session.get("awaiting_company_description")
+            or cl.user_session.get("awaiting_company_description_confirmation")
+        ):
+            return
 
         interview_count = get_company_interview_count(company)
         company_insights = get_company_insights(company)
@@ -210,7 +230,8 @@ async def run_company_setup(save_checkpoint, message: cl.Message = None) -> None
         await send_assistant_message(greeting)
         save_checkpoint(message)
     finally:
-        cl.user_session.set("company_setup_in_progress", False)
+        if int(cl.user_session.get("company_setup_token") or 0) == setup_token:
+            cl.user_session.set("company_setup_in_progress", False)
 
 
 async def handle_collection_step(collection_step: str, user_input: str, save_checkpoint, message: cl.Message = None) -> bool:

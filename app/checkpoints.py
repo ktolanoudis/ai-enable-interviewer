@@ -1,6 +1,7 @@
 import datetime
 import hashlib
 import traceback
+from http.cookies import SimpleCookie
 
 import chainlit as cl
 
@@ -49,19 +50,23 @@ def detect_client_session_id() -> str:
     return ""
 
 
-def detect_owner_fingerprint() -> str:
-    candidates = []
+def _build_owner(raw: str) -> str:
+    digest = hashlib.sha256(str(raw).encode("utf-8")).hexdigest()[:24]
+    return f"owner_{digest}"
+
+
+def detect_owner_identity() -> tuple[str, str]:
     user_obj = cl.user_session.get("user")
     if isinstance(user_obj, dict):
         for key in ("id", "identifier", "email", "name"):
             value = user_obj.get(key)
             if value:
-                candidates.append(str(value))
+                return "user", _build_owner(f"user:{value}")
     elif user_obj is not None:
         for key in ("id", "identifier", "email", "name"):
             value = getattr(user_obj, key, None)
             if value:
-                candidates.append(str(value))
+                return "user", _build_owner(f"user:{value}")
 
     try:
         current = getattr(getattr(cl, "context", None), "session", None)
@@ -70,41 +75,75 @@ def detect_owner_fingerprint() -> str:
             for key in ("id", "identifier", "email", "name"):
                 value = getattr(current_user, key, None)
                 if value:
-                    candidates.append(str(value))
+                    return "user", _build_owner(f"user:{value}")
 
-        headers = getattr(current, "headers", None)
-        if isinstance(headers, dict):
-            for header_key in ("x-forwarded-for", "x-real-ip", "user-agent"):
-                header_value = headers.get(header_key) or headers.get(header_key.title())
-                if header_value:
-                    candidates.append(str(header_value))
+        cookie_header = None
+        environ = getattr(current, "environ", None)
+        if isinstance(environ, dict):
+            cookie_header = environ.get("HTTP_COOKIE") or environ.get("cookie")
+        if not cookie_header:
+            headers = getattr(current, "headers", None)
+            if headers is not None:
+                getter = getattr(headers, "get", None)
+                if callable(getter):
+                    cookie_header = getter("cookie") or getter("Cookie")
+                elif isinstance(headers, dict):
+                    cookie_header = headers.get("cookie") or headers.get("Cookie")
+        if cookie_header:
+            try:
+                cookie = SimpleCookie()
+                cookie.load(str(cookie_header))
+                client_cookie = cookie.get("ai_enable_client_id")
+                if client_cookie and client_cookie.value:
+                    return "cookie", _build_owner(f"anon_client:{client_cookie.value}")
+            except Exception:
+                pass
+
+        session_id = getattr(current, "id", None)
+        if session_id:
+            return "chainlit_session", _build_owner(f"chainlit_session:{session_id}")
     except Exception:
         pass
 
-    raw = "|".join(candidates).strip() or "anonymous"
-    digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
-    return f"owner_{digest}"
+    raw = f"ephemeral:{detect_client_session_id() or datetime.datetime.utcnow().isoformat()}"
+    return "ephemeral", _build_owner(raw)
+
+
+def _owner_source_rank(source: str) -> int:
+    return {
+        "user": 3,
+        "cookie": 2,
+        "chainlit_session": 1,
+        "ephemeral": 0,
+    }.get(str(source or "").strip().lower(), 0)
 
 
 def ensure_owner_fingerprint() -> str:
     existing = cl.user_session.get("owner_fingerprint")
-    if existing:
+    existing_source = cl.user_session.get("owner_identity_source")
+    current_source, owner = detect_owner_identity()
+    if existing and _owner_source_rank(existing_source) >= _owner_source_rank(current_source):
         return str(existing)
-    owner = detect_owner_fingerprint()
     cl.user_session.set("owner_fingerprint", owner)
+    cl.user_session.set("owner_identity_source", current_source)
     return owner
+
+
+def _unscoped_draft_id(value) -> str:
+    raw = str(value or "").strip()
+    if raw.startswith("owner_") and ":" in raw:
+        return raw.split(":", 1)[1]
+    return raw
 
 
 def active_draft_id(message: cl.Message = None, thread: dict = None) -> str:
     owner = ensure_owner_fingerprint()
     thread_id = detect_thread_id(message=message, thread=thread)
-    client_session_id = detect_client_session_id()
     if thread_id:
         cl.user_session.set("thread_id", thread_id)
-    if client_session_id:
-        cl.user_session.set("client_session_id", client_session_id)
     session_id = cl.user_session.get("session_id")
-    draft_id = thread_id or client_session_id or cl.user_session.get("active_draft_id") or session_id
+    existing_draft_id = _unscoped_draft_id(cl.user_session.get("active_draft_id"))
+    draft_id = thread_id or existing_draft_id or session_id
     if draft_id:
         scoped_id = f"{owner}:{draft_id}"
         cl.user_session.set("active_draft_id", scoped_id)
@@ -164,8 +203,21 @@ async def replay_messages(messages: list) -> None:
             author = role.capitalize() if role else "Interviewer"
         await cl.Message(content=content, author=author).send()
 
-def fallback_open_draft_checkpoint(owner: str, label: str):
+
+def _draft_matches_thread(draft: dict, thread_id: str) -> bool:
+    if not thread_id:
+        return False
+    draft_id = str((draft or {}).get("draft_id") or "").strip()
+    if not draft_id:
+        return False
+    if draft_id == thread_id:
+        return True
+    return draft_id.endswith(f":{thread_id}")
+
+
+def fallback_open_draft_checkpoint(owner: str):
     checkpoint = None
+    thread_id = detect_thread_id()
     open_drafts = get_open_interview_checkpoints(limit=20, owner_fingerprint=owner)
     now_ts = datetime.datetime.now().timestamp()
     recent = [d for d in open_drafts if now_ts - _to_epoch_seconds(d.get("updated_at")) <= 1800]
@@ -186,6 +238,24 @@ def fallback_open_draft_checkpoint(owner: str, label: str):
         restored_draft_id = str(latest.get("draft_id") or "")
         if restored_draft_id:
             cl.user_session.set("active_draft_id", restored_draft_id)
+
+    if checkpoint or not thread_id:
+        return checkpoint
+
+    global_open_drafts = get_open_interview_checkpoints(limit=100)
+    thread_matches = [d for d in global_open_drafts if _draft_matches_thread(d, thread_id)]
+    if not thread_matches:
+        return None
+
+    latest_thread_match = sorted(
+        thread_matches,
+        key=lambda d: _to_epoch_seconds(d.get("updated_at")),
+        reverse=True,
+    )[0]
+    checkpoint = latest_thread_match.get("payload")
+    restored_draft_id = str(latest_thread_match.get("draft_id") or "")
+    if restored_draft_id:
+        cl.user_session.set("active_draft_id", restored_draft_id)
     return checkpoint
 
 

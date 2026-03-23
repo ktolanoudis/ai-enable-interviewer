@@ -74,6 +74,21 @@ def build_analysis_transcript(messages: list, metadata: dict) -> str:
         f"seniority_level: {metadata.get('seniority_level', '')}",
         f"north_star_source_hint: {metadata.get('north_star_source_hint', 'not_specified')}",
     ]
+    term_contexts = metadata.get("term_contexts") or []
+    if term_contexts:
+        meta_lines.append("term_contexts:")
+        for item in term_contexts:
+            if not isinstance(item, dict):
+                continue
+            term = str(item.get("term", "")).strip()
+            public_context = str(item.get("public_context", "")).strip()
+            user_explanation = str(item.get("user_explanation", "")).strip()
+            if term:
+                meta_lines.append(f"- term: {term}")
+                if public_context:
+                    meta_lines.append(f"  public_context: {public_context}")
+                if user_explanation:
+                    meta_lines.append(f"  user_explanation: {user_explanation}")
     chat_lines = [f'{m["role"]}: {m["content"]}' for m in messages]
     return "\n".join(meta_lines + ["", "chat_transcript:"] + chat_lines)
 

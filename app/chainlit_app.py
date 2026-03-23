@@ -3,8 +3,11 @@ import sys
 import asyncio
 import time
 import traceback
+import uuid
 from dotenv import load_dotenv
 import chainlit as cl
+from fastapi import Request
+from chainlit.server import app as chainlit_server_app
 
 sys.path.append(os.path.dirname(__file__))
 load_dotenv(override=False)
@@ -36,6 +39,12 @@ from company_flow import (
 )
 from interview_flow import maybe_handle_closure_phase, maybe_handle_company_context_phase
 from question_flow import plan_interview_response
+from term_discovery import (
+    build_term_clarification_prompt,
+    identify_term_candidate,
+    lookup_term_context,
+    save_term_context,
+)
 from session_state import (
     OPENAI_MODEL_NAME,
     STOP_ADDENDUM_WINDOW_SECONDS,
@@ -48,6 +57,64 @@ from session_state import (
 init_db()
 
 
+@chainlit_server_app.middleware("http")
+async def ensure_anonymous_client_cookie(request: Request, call_next):
+    response = await call_next(request)
+    if not request.cookies.get("ai_enable_client_id"):
+        is_local = request.client and request.client.host in ["127.0.0.1", "localhost"]
+        response.set_cookie(
+            key="ai_enable_client_id",
+            value=str(uuid.uuid4()),
+            path="/",
+            httponly=False,
+            secure=not is_local,
+            samesite="lax" if is_local else "none",
+            max_age=31536000,
+        )
+    return response
+
+
+def _company_setup_needs_resume() -> bool:
+    if not cl.user_session.get("company_setup_in_progress"):
+        return False
+    if cl.user_session.get("interview_started") or cl.user_session.get("report_done"):
+        return False
+    if (
+        cl.user_session.get("awaiting_company_confirmation")
+        or cl.user_session.get("awaiting_company_description")
+        or cl.user_session.get("awaiting_company_description_confirmation")
+    ):
+        return False
+    return True
+
+
+async def _restore_checkpoint_if_available(draft_id: str = "", owner: str = "") -> bool:
+    if cl.user_session.get("checkpoint_restored_this_connection"):
+        return True
+
+    checkpoint = get_interview_checkpoint(draft_id) if draft_id else None
+    if not checkpoint and owner:
+        checkpoint = fallback_open_draft_checkpoint(owner)
+    if not checkpoint or not restore_checkpoint_to_session(checkpoint):
+        return False
+
+    messages = cl.user_session.get("messages") or []
+    await replay_messages(messages)
+    if not messages:
+        pending = collection_prompt_for_step(cl.user_session.get("collection_step"))
+        if pending:
+            if cl.user_session.get("collection_step") == "email":
+                await send_welcome_prompt()
+            else:
+                await send_assistant_message(pending)
+
+    cl.user_session.set("checkpoint_restored_this_connection", True)
+
+    if _company_setup_needs_resume():
+        await run_company_setup(save_checkpoint)
+    return True
+
+
 @cl.on_chat_start
 async def start():
     """Initialize chat session with company memory"""
@@ -56,22 +123,7 @@ async def start():
     # If this thread already has a checkpoint, restore instead of resetting.
     owner = ensure_owner_fingerprint()
     draft_id = active_draft_id()
-    checkpoint = get_interview_checkpoint(draft_id) if draft_id else None
-    if not checkpoint:
-        checkpoint = fallback_open_draft_checkpoint(owner, "start")
-    if checkpoint and restore_checkpoint_to_session(checkpoint):
-        messages = cl.user_session.get("messages") or []
-        await replay_messages(messages)
-        if not messages:
-            pending = collection_prompt_for_step(cl.user_session.get("collection_step"))
-            if pending:
-                await send_assistant_message(pending)
-        if (
-            cl.user_session.get("company_setup_in_progress")
-            and not cl.user_session.get("interview_started")
-            and not cl.user_session.get("report_done")
-        ):
-            await run_company_setup(save_checkpoint)
+    if await _restore_checkpoint_if_available(draft_id=draft_id, owner=owner):
         return
 
     existing_messages = cl.user_session.get("messages") or []
@@ -109,25 +161,7 @@ async def resume(thread: dict):
 
     owner = ensure_owner_fingerprint()
     thread_id = active_draft_id(thread=thread)
-    checkpoint = get_interview_checkpoint(thread_id) if thread_id else None
-    if not checkpoint:
-        checkpoint = fallback_open_draft_checkpoint(owner, "resume")
-    if checkpoint and restore_checkpoint_to_session(checkpoint):
-        messages = cl.user_session.get("messages") or []
-        await replay_messages(messages)
-        if not messages:
-            pending = collection_prompt_for_step(cl.user_session.get("collection_step"))
-            if pending:
-                if cl.user_session.get("collection_step") == "email":
-                    await send_welcome_prompt()
-                else:
-                    await send_assistant_message(pending)
-        if (
-            cl.user_session.get("company_setup_in_progress")
-            and not cl.user_session.get("interview_started")
-            and not cl.user_session.get("report_done")
-        ):
-            await run_company_setup(save_checkpoint)
+    await _restore_checkpoint_if_available(draft_id=thread_id, owner=owner)
 
 
 async def _send_stop_addendum_reminder(stop_token: int):
@@ -275,6 +309,39 @@ Additional details:
     else:
         messages.append({"role": "user", "content": user_input})
     cl.user_session.set("messages", messages)
+
+    if cl.user_session.get("awaiting_term_details", False):
+        metadata = cl.user_session.get("metadata") or {}
+        term_payload = cl.user_session.get("current_term_candidate") or {}
+        metadata = save_term_context(
+            metadata,
+            str(term_payload.get("term", "")).strip(),
+            str(term_payload.get("public_context", "")).strip(),
+            user_input,
+        )
+        cl.user_session.set("metadata", metadata)
+        cl.user_session.set("awaiting_term_details", False)
+        cl.user_session.set("current_term_candidate", None)
+    else:
+        metadata = cl.user_session.get("metadata") or {}
+        term_candidate = identify_term_candidate(user_input, messages, metadata)
+        if term_candidate.get("should_clarify"):
+            term = str(term_candidate.get("term", "")).strip()
+            public_context = lookup_term_context(term, str(metadata.get("company", "")).strip())
+            followup = build_term_clarification_prompt(term, public_context)
+            cl.user_session.set("awaiting_term_details", True)
+            cl.user_session.set(
+                "current_term_candidate",
+                {
+                    "term": term,
+                    "public_context": public_context or "",
+                },
+            )
+            messages.append({"role": "assistant", "content": followup})
+            cl.user_session.set("messages", messages)
+            await send_assistant_message(followup)
+            save_checkpoint(message)
+            return
     
     try:
         response = plan_interview_response(messages)

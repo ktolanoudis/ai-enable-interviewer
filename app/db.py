@@ -26,7 +26,15 @@ def _mongo_collections():
             "DB_BACKEND=mongodb requires pymongo. Install dependencies with: pip install -r requirements.txt"
         ) from exc
 
-    client = MongoClient(MONGODB_URI)
+    client_kwargs = {}
+    try:
+        import certifi
+
+        client_kwargs["tlsCAFile"] = certifi.where()
+    except Exception:
+        pass
+
+    client = MongoClient(MONGODB_URI, **client_kwargs)
     db = client[MONGODB_DB_NAME]
     return client, db["sessions"], db["company_insights"]
 
@@ -39,7 +47,15 @@ def _mongo_drafts_collection():
             "DB_BACKEND=mongodb requires pymongo. Install dependencies with: pip install -r requirements.txt"
         ) from exc
 
-    client = MongoClient(MONGODB_URI)
+    client_kwargs = {}
+    try:
+        import certifi
+
+        client_kwargs["tlsCAFile"] = certifi.where()
+    except Exception:
+        pass
+
+    client = MongoClient(MONGODB_URI, **client_kwargs)
     db = client[MONGODB_DB_NAME]
     return client, db["interview_drafts"]
 
@@ -87,6 +103,24 @@ def _merge_validated_use_case_feedback(existing_items: Optional[List], new_items
             "average_rating": average_rating,
             "support_count": int(item.get("support_count", 0) or 0),
             "concern_count": int(item.get("concern_count", 0) or 0),
+            "data_quality_score_count": int(item.get("data_quality_score_count", 0) or 0),
+            "data_quality_score_sum": float(item.get("data_quality_score_sum", 0) or 0),
+            "average_data_quality_score": item.get("average_data_quality_score"),
+            "explainability_score_count": int(item.get("explainability_score_count", 0) or 0),
+            "explainability_score_sum": float(item.get("explainability_score_sum", 0) or 0),
+            "average_explainability_score": item.get("average_explainability_score"),
+            "regulatory_risk_counts": {
+                "low": int(((item.get("regulatory_risk_counts") or {}).get("low", 0)) or 0),
+                "medium": int(((item.get("regulatory_risk_counts") or {}).get("medium", 0)) or 0),
+                "high": int(((item.get("regulatory_risk_counts") or {}).get("high", 0)) or 0),
+                "critical": int(((item.get("regulatory_risk_counts") or {}).get("critical", 0)) or 0),
+                "unknown": int(((item.get("regulatory_risk_counts") or {}).get("unknown", 0)) or 0),
+            },
+            "safe_to_pursue_counts": {
+                "yes": int(((item.get("safe_to_pursue_counts") or {}).get("yes", 0)) or 0),
+                "no": int(((item.get("safe_to_pursue_counts") or {}).get("no", 0)) or 0),
+                "unclear": int(((item.get("safe_to_pursue_counts") or {}).get("unclear", 0)) or 0),
+            },
             "comments": comments,
             "last_updated": item.get("last_updated"),
         }
@@ -111,6 +145,24 @@ def _merge_validated_use_case_feedback(existing_items: Optional[List], new_items
         )
         current["support_count"] += entry["support_count"]
         current["concern_count"] += entry["concern_count"]
+        current["data_quality_score_count"] += entry["data_quality_score_count"]
+        current["data_quality_score_sum"] += entry["data_quality_score_sum"]
+        current["average_data_quality_score"] = (
+            round(current["data_quality_score_sum"] / current["data_quality_score_count"], 2)
+            if current["data_quality_score_count"] > 0
+            else None
+        )
+        current["explainability_score_count"] += entry["explainability_score_count"]
+        current["explainability_score_sum"] += entry["explainability_score_sum"]
+        current["average_explainability_score"] = (
+            round(current["explainability_score_sum"] / current["explainability_score_count"], 2)
+            if current["explainability_score_count"] > 0
+            else None
+        )
+        for key in current["regulatory_risk_counts"]:
+            current["regulatory_risk_counts"][key] += entry["regulatory_risk_counts"].get(key, 0)
+        for key in current["safe_to_pursue_counts"]:
+            current["safe_to_pursue_counts"][key] += entry["safe_to_pursue_counts"].get(key, 0)
         if entry.get("latest_description"):
             current["latest_description"] = entry["latest_description"]
         if isinstance(entry.get("comments"), list):

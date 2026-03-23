@@ -25,9 +25,22 @@ def append_use_case_feedback_markdown(md_content: str, use_case_feedback: list) 
         name = str(item.get("use_case_name", "AI Use Case")).strip() or "AI Use Case"
         rating = item.get("rating")
         reason = str(item.get("comment", "")).strip()
+        feasibility = item.get("feasibility_feedback") or {}
         lines.append(f"### Feedback {idx}: {name}")
         lines.append(f"- **Rating:** {rating}/5" if rating is not None else "- **Rating:** Skipped")
         lines.append(f"- **Comment:** {reason}" if reason else "- **Comment:** No additional comment provided.")
+        if feasibility:
+            lines.append("- **Feasibility Review:**")
+            dq = feasibility.get("data_quality_score")
+            rr = feasibility.get("regulatory_risk_level")
+            ex = feasibility.get("explainability_score")
+            safe = feasibility.get("safe_to_pursue")
+            lines.append(f"  - Data quality readiness: {dq}/5" if dq is not None else "  - Data quality readiness: Not assessed")
+            lines.append(f"  - Regulatory risk: {rr}" if rr else "  - Regulatory risk: Not assessed")
+            lines.append(f"  - Explainability need: {ex}/5" if ex is not None else "  - Explainability need: Not assessed")
+            lines.append(f"  - Safe to pursue: {safe}" if safe else "  - Safe to pursue: Unclear")
+            if feasibility.get("summary_comment"):
+                lines.append(f"  - Feasibility comment: {feasibility['summary_comment']}")
         lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 
@@ -74,6 +87,28 @@ def build_use_case_rating_followup() -> str:
     return "How would you rate it from 1 to 5, where 1 means not useful and 5 means very useful? You can also type 'skip'."
 
 
+def build_use_case_feasibility_prompt(dimension: str, is_first: bool = False) -> str:
+    intro = "One short feasibility check before we move on.\n\n" if is_first else ""
+    prompts = {
+        "data_quality": (
+            "Based on what you know in your role, how does this look in terms of data quality and data availability?\n"
+            "For example, does the needed data exist, look reliable enough, and seem accessible in practice?"
+        ),
+        "regulatory_risk": (
+            "Based on what you know in your role, how does this look in terms of regulatory or compliance risk?\n"
+            "For example, do you see privacy, legal, policy, or approval concerns here?"
+        ),
+        "explainability": (
+            "Based on what you know in your role, how important would explainability be for this use case?\n"
+            "For example, would the AI output need to be easy to justify, audit, or explain to others?"
+        ),
+    }
+    question = prompts.get(dimension, "")
+    if not question:
+        return ""
+    return intro + question + "\nA brief answer is enough. If this part is outside your visibility, just say so."
+
+
 def build_validated_use_case_entries(feedback_entries: list, metadata: dict) -> list:
     grouped = {}
     timestamp = datetime.datetime.utcnow().isoformat()
@@ -99,6 +134,24 @@ def build_validated_use_case_entries(feedback_entries: list, metadata: dict) -> 
                 "average_rating": None,
                 "support_count": 0,
                 "concern_count": 0,
+                "data_quality_score_count": 0,
+                "data_quality_score_sum": 0.0,
+                "average_data_quality_score": None,
+                "explainability_score_count": 0,
+                "explainability_score_sum": 0.0,
+                "average_explainability_score": None,
+                "regulatory_risk_counts": {
+                    "low": 0,
+                    "medium": 0,
+                    "high": 0,
+                    "critical": 0,
+                    "unknown": 0,
+                },
+                "safe_to_pursue_counts": {
+                    "yes": 0,
+                    "no": 0,
+                    "unclear": 0,
+                },
                 "comments": [],
                 "last_updated": timestamp,
             },
@@ -111,7 +164,32 @@ def build_validated_use_case_entries(feedback_entries: list, metadata: dict) -> 
                 group["support_count"] += 1
             elif rating <= 2:
                 group["concern_count"] += 1
-        if comment:
+        feasibility = item.get("feasibility_feedback") or {}
+        dq = feasibility.get("data_quality_score")
+        if isinstance(dq, int):
+            group["data_quality_score_count"] += 1
+            group["data_quality_score_sum"] += dq
+            group["average_data_quality_score"] = round(
+                group["data_quality_score_sum"] / group["data_quality_score_count"],
+                2,
+            )
+        ex = feasibility.get("explainability_score")
+        if isinstance(ex, int):
+            group["explainability_score_count"] += 1
+            group["explainability_score_sum"] += ex
+            group["average_explainability_score"] = round(
+                group["explainability_score_sum"] / group["explainability_score_count"],
+                2,
+            )
+        risk = str(feasibility.get("regulatory_risk_level", "unknown")).strip().lower()
+        if risk not in group["regulatory_risk_counts"]:
+            risk = "unknown"
+        group["regulatory_risk_counts"][risk] += 1
+        safe = str(feasibility.get("safe_to_pursue", "unclear")).strip().lower()
+        if safe not in group["safe_to_pursue_counts"]:
+            safe = "unclear"
+        group["safe_to_pursue_counts"][safe] += 1
+        if comment or any(feasibility.values()):
             group["comments"].append(
                 {
                     "employee": employee_name,
@@ -119,6 +197,7 @@ def build_validated_use_case_entries(feedback_entries: list, metadata: dict) -> 
                     "department": department,
                     "rating": rating,
                     "comment": comment,
+                    "feasibility_feedback": feasibility,
                     "created_at": timestamp,
                 }
             )
@@ -147,9 +226,11 @@ async def begin_use_case_feedback(send_assistant_message, messages: list, metada
         return None
     cl.user_session.set("awaiting_use_case_feedback_consent", True)
     cl.user_session.set("awaiting_use_case_rating", False)
+    cl.user_session.set("awaiting_use_case_feasibility", False)
     cl.user_session.set("use_case_feedback_index", 0)
     cl.user_session.set("use_case_feedback_entries", [])
     cl.user_session.set("current_use_case_feedback", None)
+    cl.user_session.set("current_use_case_feasibility_scope", None)
     invitation = build_use_case_feedback_invitation(use_cases)
     messages.append({"role": "assistant", "content": invitation})
     cl.user_session.set("messages", messages)
@@ -166,6 +247,7 @@ async def send_next_use_case_feedback_prompt(send_assistant_message, messages: l
     prompt = build_use_case_rating_prompt(use_cases[index], index + 1, len(use_cases))
     cl.user_session.set("awaiting_use_case_opinion", True)
     cl.user_session.set("awaiting_use_case_rating", False)
+    cl.user_session.set("awaiting_use_case_feasibility", False)
     messages.append({"role": "assistant", "content": prompt})
     cl.user_session.set("messages", messages)
     await send_assistant_message(prompt)
@@ -230,6 +312,8 @@ async def close_interview(send_assistant_message, messages: list, transcript: st
         cl.user_session.set("awaiting_use_case_feedback_consent", False)
         cl.user_session.set("awaiting_use_case_opinion", False)
         cl.user_session.set("awaiting_use_case_rating", False)
+        cl.user_session.set("awaiting_use_case_feasibility", False)
         cl.user_session.set("use_case_feedback_index", 0)
         cl.user_session.set("use_case_feedback_entries", [])
         cl.user_session.set("current_use_case_feedback", None)
+        cl.user_session.set("current_use_case_feasibility_scope", None)

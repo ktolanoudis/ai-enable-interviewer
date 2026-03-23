@@ -24,6 +24,7 @@ CHECKPOINT_STATE_KEYS = [
     "company_context",
     "use_case_validation_done",
     "company_setup_in_progress",
+    "company_setup_token",
     "interview_started",
     "awaiting_addendum_after_stop",
     "last_stop_ts",
@@ -38,17 +39,20 @@ CHECKPOINT_STATE_KEYS = [
     "company_context_confirmed",
     "post_company_confirmation_prompt",
     "post_company_confirmation_step",
+    "awaiting_term_details",
+    "current_term_candidate",
     "pending_report_payload",
     "awaiting_use_case_feedback_consent",
     "awaiting_use_case_opinion",
     "awaiting_use_case_scope_resolution",
     "awaiting_use_case_rating",
+    "awaiting_use_case_feasibility",
     "use_case_feedback_index",
     "use_case_feedback_entries",
     "current_use_case_feedback",
+    "current_use_case_feasibility_scope",
     "active_draft_id",
     "thread_id",
-    "client_session_id",
     "owner_fingerprint",
 ]
 
@@ -102,6 +106,7 @@ def init_session_state() -> None:
     cl.user_session.set("company_context", None)
     cl.user_session.set("use_case_validation_done", False)
     cl.user_session.set("company_setup_in_progress", False)
+    cl.user_session.set("company_setup_token", 0)
     cl.user_session.set("interview_started", False)
     cl.user_session.set("awaiting_addendum_after_stop", False)
     cl.user_session.set("last_stop_ts", 0.0)
@@ -116,11 +121,15 @@ def init_session_state() -> None:
     cl.user_session.set("company_context_confirmed", False)
     cl.user_session.set("post_company_confirmation_prompt", "")
     cl.user_session.set("post_company_confirmation_step", None)
+    cl.user_session.set("awaiting_term_details", False)
+    cl.user_session.set("current_term_candidate", None)
     cl.user_session.set("pending_report_payload", None)
     cl.user_session.set("awaiting_use_case_feedback_consent", False)
     cl.user_session.set("awaiting_use_case_opinion", False)
     cl.user_session.set("awaiting_use_case_scope_resolution", False)
     cl.user_session.set("awaiting_use_case_rating", False)
+    cl.user_session.set("awaiting_use_case_feasibility", False)
     cl.user_session.set("use_case_feedback_index", 0)
     cl.user_session.set("use_case_feedback_entries", [])
     cl.user_session.set("current_use_case_feedback", None)
+    cl.user_session.set("current_use_case_feasibility_scope", None)

@@ -1,11 +1,21 @@
 import chainlit as cl
 
 from conversation_utils import build_analysis_transcript
-from feedback_flow import begin_use_case_feedback, build_use_case_rating_followup, close_interview, parse_use_case_rating, send_next_use_case_feedback_prompt
+from feedback_flow import (
+    begin_use_case_feedback,
+    build_use_case_feasibility_prompt,
+    build_use_case_rating_followup,
+    close_interview,
+    parse_use_case_rating,
+    send_next_use_case_feedback_prompt,
+)
 from meta_question_handler import (
+    assess_use_case_feasibility_scope,
     classify_confirmation_response,
     classify_use_case_feedback_response,
     classify_use_case_scope_resolution,
+    extract_single_feasibility_dimension_feedback,
+    extract_use_case_feasibility_feedback,
     generate_use_case_feedback_clarification,
     generate_use_case_feedback_scope_followup,
     generate_use_case_feedback_structural_followup,
@@ -69,6 +79,8 @@ async def _advance_use_case_feedback_or_close(send_assistant_message, save_check
     cl.user_session.set("awaiting_use_case_opinion", False)
     cl.user_session.set("awaiting_use_case_scope_resolution", False)
     cl.user_session.set("awaiting_use_case_rating", False)
+    cl.user_session.set("awaiting_use_case_feasibility", False)
+    cl.user_session.set("current_use_case_feasibility_scope", None)
 
     if next_index < len(use_cases):
         await send_next_use_case_feedback_prompt(send_assistant_message, messages)
@@ -366,6 +378,7 @@ async def maybe_handle_closure_phase(user_input: str, message, save_checkpoint, 
             "description": current_use_case.get("description", ""),
             "rating": None,
             "comment": "" if user_input.lower() == "skip" else user_input,
+            "feasibility_feedback": {},
         }
         cl.user_session.set("current_use_case_feedback", current_feedback)
         cl.user_session.set("awaiting_use_case_opinion", False)
@@ -405,9 +418,22 @@ async def maybe_handle_closure_phase(user_input: str, message, save_checkpoint, 
         cl.user_session.set("current_use_case_feedback", current_feedback)
 
         if resolution_intent == "outside_role":
+            current_feedback["rating"] = None
+            current_feedback["outside_scope"] = True
+            cl.user_session.set("current_use_case_feedback", current_feedback)
+            cl.user_session.set("awaiting_use_case_scope_resolution", False)
+            cl.user_session.set("awaiting_use_case_rating", False)
+            cl.user_session.set("awaiting_use_case_feasibility", False)
+            cl.user_session.set("current_use_case_feasibility_scope", None)
             feedback_entries = cl.user_session.get("use_case_feedback_entries") or []
             feedback_entries.append(current_feedback)
             cl.user_session.set("use_case_feedback_entries", feedback_entries)
+            acknowledgement = (
+                "Understood. I’ll treat this as outside your role and skip scoring it."
+            )
+            messages.append({"role": "assistant", "content": acknowledgement})
+            cl.user_session.set("messages", messages)
+            await send_assistant_message(acknowledgement)
             return await _advance_use_case_feedback_or_close(
                 send_assistant_message,
                 save_checkpoint,
@@ -466,6 +492,126 @@ async def maybe_handle_closure_phase(user_input: str, message, save_checkpoint, 
         current_feedback["rating"] = rating_value
         cl.user_session.set("current_use_case_feedback", current_feedback)
         cl.user_session.set("awaiting_use_case_rating", False)
+        metadata = cl.user_session.get("metadata") or {}
+        use_case_context = ""
+        if index < len(use_cases):
+            use_case_context = "\n".join(
+                part for part in [
+                    str(use_cases[index].get("use_case_name", "")).strip(),
+                    str(use_cases[index].get("description", "")).strip(),
+                    str(use_cases[index].get("expected_impact", "")).strip(),
+                ] if part
+            )
+        scope = assess_use_case_feasibility_scope(use_case_context, metadata, messages)
+        dimensions = []
+        if scope.get("can_judge_data_quality"):
+            dimensions.append("data_quality")
+        if scope.get("can_judge_regulatory_risk"):
+            dimensions.append("regulatory_risk")
+        if scope.get("can_judge_explainability"):
+            dimensions.append("explainability")
+        if dimensions:
+            scope["pending_dimensions"] = dimensions
+            scope["current_dimension"] = dimensions[0]
+            feasibility_prompt = build_use_case_feasibility_prompt(dimensions[0], is_first=True)
+            cl.user_session.set("awaiting_use_case_feasibility", True)
+            cl.user_session.set("current_use_case_feasibility_scope", scope)
+            messages.append({"role": "assistant", "content": feasibility_prompt})
+            cl.user_session.set("messages", messages)
+            await send_assistant_message(feasibility_prompt)
+            save_checkpoint(message)
+            return True
+
+        feedback_entries = cl.user_session.get("use_case_feedback_entries") or []
+        feedback_entries.append(current_feedback)
+        cl.user_session.set("use_case_feedback_entries", feedback_entries)
+        return await _advance_use_case_feedback_or_close(
+            send_assistant_message,
+            save_checkpoint,
+            message,
+            messages,
+            report_payload,
+            feedback_entries,
+        )
+
+    if cl.user_session.get("awaiting_use_case_feasibility", False):
+        messages = cl.user_session.get("messages") or []
+        messages.append({"role": "user", "content": user_input})
+        cl.user_session.set("messages", messages)
+
+        report_payload = cl.user_session.get("pending_report_payload") or {}
+        use_cases = report_payload.get("use_cases") or []
+        index = int(cl.user_session.get("use_case_feedback_index", 0) or 0)
+        use_case_context = ""
+        if 0 <= index < len(use_cases):
+            current_use_case = use_cases[index]
+            use_case_context = "\n".join(
+                part for part in [
+                    str(current_use_case.get("use_case_name", "")).strip(),
+                    str(current_use_case.get("description", "")).strip(),
+                    str(current_use_case.get("expected_impact", "")).strip(),
+                ] if part
+            )
+
+        current_feedback = cl.user_session.get("current_use_case_feedback") or {}
+        scope = cl.user_session.get("current_use_case_feasibility_scope") or {}
+        feasibility_feedback = current_feedback.get("feasibility_feedback") or {}
+        current_dimension = str(scope.get("current_dimension") or "").strip()
+        extracted = extract_single_feasibility_dimension_feedback(
+            current_dimension,
+            user_input,
+            use_case_context,
+            messages,
+        )
+        if current_dimension == "data_quality":
+            feasibility_feedback["data_quality_score"] = extracted.get("score")
+            feasibility_feedback["data_quality_comment"] = extracted.get("comment", "")
+        elif current_dimension == "regulatory_risk":
+            feasibility_feedback["regulatory_risk_level"] = extracted.get("level", "unknown")
+            feasibility_feedback["regulatory_comment"] = extracted.get("comment", "")
+        elif current_dimension == "explainability":
+            feasibility_feedback["explainability_score"] = extracted.get("score")
+            feasibility_feedback["explainability_comment"] = extracted.get("comment", "")
+
+        pending_dimensions = list(scope.get("pending_dimensions") or [])
+        if pending_dimensions and pending_dimensions[0] == current_dimension:
+            pending_dimensions = pending_dimensions[1:]
+        elif current_dimension in pending_dimensions:
+            pending_dimensions = [d for d in pending_dimensions if d != current_dimension]
+
+        current_feedback["feasibility_feedback"] = feasibility_feedback
+        cl.user_session.set("current_use_case_feedback", current_feedback)
+
+        if pending_dimensions:
+            scope["pending_dimensions"] = pending_dimensions
+            scope["current_dimension"] = pending_dimensions[0]
+            cl.user_session.set("current_use_case_feasibility_scope", scope)
+            next_prompt = build_use_case_feasibility_prompt(pending_dimensions[0], is_first=False)
+            messages.append({"role": "assistant", "content": next_prompt})
+            cl.user_session.set("messages", messages)
+            await send_assistant_message(next_prompt)
+            save_checkpoint(message)
+            return True
+
+        summary = extract_use_case_feasibility_feedback(
+            "\n".join(
+                part for part in [
+                    feasibility_feedback.get("data_quality_comment", ""),
+                    feasibility_feedback.get("regulatory_comment", ""),
+                    feasibility_feedback.get("explainability_comment", ""),
+                ] if part
+            ),
+            use_case_context,
+            scope,
+            messages,
+        )
+        current_feedback["feasibility_feedback"] = {
+            **summary,
+            **feasibility_feedback,
+        }
+        cl.user_session.set("current_use_case_feedback", current_feedback)
+        cl.user_session.set("awaiting_use_case_feasibility", False)
+        cl.user_session.set("current_use_case_feasibility_scope", None)
 
         feedback_entries = cl.user_session.get("use_case_feedback_entries") or []
         feedback_entries.append(current_feedback)
