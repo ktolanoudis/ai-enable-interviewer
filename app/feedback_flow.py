@@ -87,26 +87,68 @@ def build_use_case_rating_followup() -> str:
     return "How would you rate it from 1 to 5, where 1 means not useful and 5 means very useful? You can also type 'skip'."
 
 
-def build_use_case_feasibility_prompt(dimension: str, is_first: bool = False) -> str:
-    intro = "One short feasibility check before we move on.\n\n" if is_first else ""
+def build_use_case_feasibility_prompt(dimension: str, is_first: bool = False, variant: int = 0) -> str:
+    intros = [
+        "One short feasibility check before we move on.",
+        "One quick feasibility question before the next use case.",
+        "Before the next one, I want to check one practical feasibility point.",
+    ]
+    closers = [
+        "A brief answer is enough. If this part is outside your visibility, just say so.",
+        "A short practical answer is enough. If you do not really see this part from your role, just say that.",
+        "You do not need to be exhaustive here. If this is outside your visibility, just say so.",
+    ]
     prompts = {
-        "data_quality": (
-            "Based on what you know in your role, how does this look in terms of data quality and data availability?\n"
-            "For example, does the needed data exist, look reliable enough, and seem accessible in practice?"
-        ),
-        "regulatory_risk": (
-            "Based on what you know in your role, how does this look in terms of regulatory or compliance risk?\n"
-            "For example, do you see privacy, legal, policy, or approval concerns here?"
-        ),
-        "explainability": (
-            "Based on what you know in your role, how important would explainability be for this use case?\n"
-            "For example, would the AI output need to be easy to justify, audit, or explain to others?"
-        ),
+        "data_quality": [
+            (
+                "Based on what you know in your role, how does this look in terms of data quality and data availability?\n"
+                "For example, does the needed data exist, look reliable enough, and seem accessible in practice?"
+            ),
+            (
+                "From your perspective, is the data for something like this actually there and usable?\n"
+                "I mean both whether the needed information exists and whether it is clean or consistent enough to rely on."
+            ),
+            (
+                "How solid does the data foundation for this seem in practice?\n"
+                "For example, would the right inputs be available, trustworthy enough, and reachable without too much friction?"
+            ),
+        ],
+        "regulatory_risk": [
+            (
+                "Based on what you know in your role, how does this look in terms of regulatory or compliance risk?\n"
+                "For example, do you see privacy, legal, policy, or approval concerns here?"
+            ),
+            (
+                "From what you can see, would something like this raise any privacy, legal, policy, or approval concerns?\n"
+                "I am mainly asking whether there are compliance constraints that could make it harder to use safely."
+            ),
+            (
+                "How risky does this seem from a regulatory or compliance point of view?\n"
+                "For example, do you think there would be privacy, legal, or internal policy concerns to work through?"
+            ),
+        ],
+        "explainability": [
+            (
+                "Based on what you know in your role, how important would explainability be for this use case?\n"
+                "For example, would the AI output need to be easy to justify, audit, or explain to others?"
+            ),
+            (
+                "How important would it be for this kind of AI output to be easy to explain or justify?\n"
+                "For example, would people need to understand why it suggested something before trusting or using it?"
+            ),
+            (
+                "From your side, would this need to be highly explainable to work in practice?\n"
+                "I mean whether the output would need to be easy to justify, audit, or defend to others."
+            ),
+        ],
     }
-    question = prompts.get(dimension, "")
-    if not question:
+    prompt_variants = prompts.get(dimension) or []
+    if not prompt_variants:
         return ""
-    return intro + question + "\nA brief answer is enough. If this part is outside your visibility, just say so."
+    prompt_variant = prompt_variants[variant % len(prompt_variants)]
+    opener = intros[variant % len(intros)] + "\n\n" if is_first else ""
+    closer = closers[variant % len(closers)]
+    return opener + prompt_variant + "\n" + closer
 
 
 def build_validated_use_case_entries(feedback_entries: list, metadata: dict) -> list:

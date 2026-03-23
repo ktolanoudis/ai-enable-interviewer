@@ -83,7 +83,6 @@ def plan_interview_response(messages: list) -> str:
 
     role = str(metadata.get("role") or "").strip()
     seniority = classify_seniority(role or "associate")
-    use_case_validation_done = cl.user_session.get("use_case_validation_done", False)
     has_north_star = bool(company_context and company_context.get("north_star"))
     ask_north_star = should_ask_north_star(seniority, has_north_star)
     if DEBUG_QUESTION_FLOW:
@@ -91,7 +90,6 @@ def plan_interview_response(messages: list) -> str:
             "question_planning",
             has_north_star=has_north_star,
             ask_north_star=ask_north_star,
-            use_case_validation_done=use_case_validation_done,
             message_count=len(messages),
         )
 

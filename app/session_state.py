@@ -22,7 +22,6 @@ CHECKPOINT_STATE_KEYS = [
     "seniority_level",
     "interview_count",
     "company_context",
-    "use_case_validation_done",
     "company_setup_in_progress",
     "company_setup_token",
     "interview_started",
@@ -104,7 +103,6 @@ def init_session_state() -> None:
     cl.user_session.set("seniority_level", None)
     cl.user_session.set("interview_count", 0)
     cl.user_session.set("company_context", None)
-    cl.user_session.set("use_case_validation_done", False)
     cl.user_session.set("company_setup_in_progress", False)
     cl.user_session.set("company_setup_token", 0)
     cl.user_session.set("interview_started", False)

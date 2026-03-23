@@ -63,3 +63,10 @@ html[data-mui-color-scheme="dark"] body::after,
 body[data-mui-color-scheme="dark"]::after {
   background-image: url("/public/lab-logo-light.png") !important;
 }
+
+@media (max-width: 1450px) {
+  body::before,
+  body::after {
+    display: none !important;
+  }
+}

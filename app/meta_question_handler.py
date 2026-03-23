@@ -163,6 +163,126 @@ Rules:
     return {"intent": "opinion"}
 
 
+def interpret_use_case_opinion_response(
+    user_message: str,
+    use_case_context: str = "",
+    history: Optional[list] = None,
+) -> dict:
+    recent_history = [
+        {"role": m.get("role"), "content": m.get("content", "")}
+        for m in (history or [])[-8:]
+        if isinstance(m, dict) and m.get("role") in {"user", "assistant"} and m.get("content")
+    ]
+
+    system_prompt = """You interpret the user's latest message during an AI use-case feedback step.
+
+Return JSON with:
+- has_substantive_opinion: boolean
+- opinion_text: string
+- included_rating: integer 1-5, "skip", or null
+
+Rules:
+- The user may give both their practical opinion and rating in the same message.
+- "has_substantive_opinion" should be true only if the message contains a meaningful practical reaction in words, not just a number or a very short score-only phrase.
+- If the message includes both a rating and an opinion, keep only the practical opinion in "opinion_text" and extract the rating separately.
+- If the message is only a rating or effectively only a rating, set "has_substantive_opinion" to false and leave "opinion_text" empty.
+- Preserve the user's meaning in "opinion_text"; do not add new facts.
+- Return only valid JSON.
+"""
+
+    payload = {
+        "use_case_context": use_case_context,
+        "recent_history": recent_history,
+        "user_message": user_message,
+    }
+
+    try:
+        resp = get_client().chat.completions.create(
+            model=MODEL,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": json.dumps(payload)},
+            ],
+            response_format={"type": "json_object"},
+        )
+        data = json.loads(resp.choices[0].message.content or "{}")
+        has_substantive_opinion = bool(data.get("has_substantive_opinion"))
+        opinion_text = str(data.get("opinion_text", "") or "").strip()
+        included_rating = data.get("included_rating")
+        if included_rating == "skip":
+            normalized_rating = "skip"
+        elif isinstance(included_rating, int) and 1 <= included_rating <= 5:
+            normalized_rating = included_rating
+        else:
+            normalized_rating = None
+        return {
+            "has_substantive_opinion": has_substantive_opinion,
+            "opinion_text": opinion_text,
+            "included_rating": normalized_rating,
+        }
+    except Exception:
+        return {
+            "has_substantive_opinion": False,
+            "opinion_text": "",
+            "included_rating": None,
+        }
+
+
+def interpret_use_case_rating_response(
+    user_message: str,
+    use_case_context: str = "",
+    history: Optional[list] = None,
+) -> dict:
+    recent_history = [
+        {"role": m.get("role"), "content": m.get("content", "")}
+        for m in (history or [])[-8:]
+        if isinstance(m, dict) and m.get("role") in {"user", "assistant"} and m.get("content")
+    ]
+
+    system_prompt = """You interpret the user's latest message during an AI use-case rating step.
+
+Return JSON with:
+- rating: integer 1-5, "skip", or null
+- comment_text: string
+
+Rules:
+- The user may provide both a score and extra explanation in the same message.
+- Extract the rating when present.
+- Put any meaningful explanation, justification, or caveat into "comment_text".
+- If the message is only a rating, leave "comment_text" empty.
+- Do not invent new facts. Keep the user's meaning.
+- Return only valid JSON.
+"""
+
+    payload = {
+        "use_case_context": use_case_context,
+        "recent_history": recent_history,
+        "user_message": user_message,
+    }
+
+    try:
+        resp = get_client().chat.completions.create(
+            model=MODEL,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": json.dumps(payload)},
+            ],
+            response_format={"type": "json_object"},
+        )
+        data = json.loads(resp.choices[0].message.content or "{}")
+        rating = data.get("rating")
+        if rating == "skip":
+            normalized_rating = "skip"
+        elif isinstance(rating, int) and 1 <= rating <= 5:
+            normalized_rating = rating
+        else:
+            normalized_rating = None
+        comment_text = str(data.get("comment_text", "") or "").strip()
+        return {"rating": normalized_rating, "comment_text": comment_text}
+    except Exception:
+        return {"rating": None, "comment_text": ""}
+
+
 def generate_use_case_feedback_clarification(
     user_message: str,
     use_case_context: str = "",
