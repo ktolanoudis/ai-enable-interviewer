@@ -1,17 +1,25 @@
 # AI-Enable: AI Use Case Discovery Agent
 
-A multi‑stakeholder conversational AI system that discovers, analyzes, and prioritizes AI opportunities inside organizations.
+A conversational system for identifying, evaluating, and prioritizing AI opportunities inside organizations through structured employee interviews.
 
-The system conducts structured interviews with employees across different roles and departments, extracts operational tasks and bottlenecks, and generates a prioritized portfolio of AI use cases aligned with business goals.
+The app covers Steps 2 to 5 of the framework used in the thesis work behind the project:
 
-\---
+- Step 2: task identification and breakdown
+- Step 3: AI use case discovery
+- Step 4: KPI definition
+- Step 5: feasibility assessment
+
+It conducts role-aware interviews, accumulates organizational context across interviews, produces structured reports, and collects employee feedback on proposed AI use cases at the end of the interview.
+
+---
 
 # Quick Start
 
 Requirements
 
-* Python 3.13+
-* OpenAI API key (or LiteLLM proxy)
+- Python 3.13+
+- OpenAI API key
+- MongoDB Atlas recommended for shared interview drafts and production use
 
 Clone the repository
 
@@ -20,7 +28,7 @@ git clone https://github.com/ktolanoudis/ai-enable-interviewer.git
 cd ai-enable-interviewer
 ```
 
-Create virtual environment
+Create a virtual environment
 
 ```bash
 python -m venv venv
@@ -33,194 +41,238 @@ Install dependencies
 pip install -r requirements.txt
 ```
 
-Create environment file
+Create the environment file
 
 ```bash
 cp .env.example .env
 ```
 
-Add your API key:
+Then set the required values in `.env`, especially:
 
 ```bash
-OPENAI\_API\_KEY=sk-...
+OPENAI_API_KEY=sk-...
+DB_BACKEND=mongodb
+MONGODB_URI=...
+MONGODB_DB_NAME=ai_enable_discovery
 ```
 
-Run the application
+Run the app locally without Docker
 
 ```bash
-chainlit run app/chainlit\_app.py -w --port 8000
+chainlit run app/chainlit_app.py --host 0.0.0.0 --port 8000
 ```
 
-Open your browser:
+Open:
 
-```
+```text
 http://localhost:8000
 ```
 
-\---
+---
 
-# Docker Deployment
+# Docker Run
 
-Deployments use Docker Compose and rebuild from source on the server.
-
-## One-Time Server Setup
+The main Docker entrypoint for local and server use is:
 
 ```bash
-git clone https://github.com/ktolanoudis/ai-enable-interviewer.git
-cd ai-enable-interviewer
-cp .env.example .env
-# edit .env with required values
-chmod +x scripts/server-setup.sh
-./scripts/server-setup.sh
+./scripts/docker-run.sh
 ```
 
-## Manual Deploy
+What it does:
 
-From the repo directory on the server:
+- builds the image from source
+- removes any previous `discovery-app` container
+- starts the app container on the configured port
+- uses `.env` for runtime configuration
+
+If `DB_BACKEND=mongodb` and `MONGODB_URI` is set, the container runs against MongoDB Atlas.
+
+If you switch to a local SQLite setup instead, the script mounts:
+
+- `data/` to `/app/data`
+- `reports/` to `/app/reports`
+
+By default the app starts at:
+
+```text
+http://localhost:8000
+```
+
+You can override ports through `.env`:
 
 ```bash
-chmod +x scripts/deploy-prod.sh
-./scripts/deploy-prod.sh
+PORT=8000
+HOST_PORT=8000
 ```
 
-This pulls the latest `main`, rebuilds the image locally, and restarts the app via Compose.
+---
 
-## Automatic Deploy on Push
+# What The App Does
 
-Configure these GitHub repository secrets and enable `.github/workflows/deploy-from-source.yml`:
+The interview flow is designed to gather enough operational detail to generate useful AI opportunities without turning the conversation into a form.
 
-* `DEPLOY\_HOST` (server IP or hostname)
-* `DEPLOY\_PORT` (optional, default `22`)
-* `DEPLOY\_USER` (SSH user)
-* `DEPLOY\_PATH` (absolute path to cloned repo on server)
-* `DEPLOY\_SSH\_KEY` (private key with access to that server)
+Core behavior:
 
-The workflow SSHes into the server and runs:
+- collects employee metadata in a fixed order:
+  - name
+  - company
+  - company website
+  - work email
+  - department
+  - role
+- researches the company from its website and public sources, then asks the interviewee to confirm or correct that context
+- adapts questions based on seniority and previous company interviews
+- keeps draft progress in persistent storage so a browser refresh can restore the active interview
+- reuses company memory from prior interviews to avoid starting from zero each time
 
-```bash
-BRANCH=main ./scripts/deploy-prod.sh
-```
+The interview itself focuses on:
 
-\---
+- day-to-day tasks
+- friction points and bottlenecks
+- tools and systems in use
+- business goals and KPIs
+- data, process, and implementation constraints
 
-# Overview
+---
 
-Organizations are investing heavily in AI, yet most struggle to translate experimentation into real business value.
+# Use Case Review
 
-One major challenge is identifying **high-impact and feasible AI opportunities within existing workflows**.
+At the end of the interview, the app does not stop at generating use cases internally. It also asks the interviewee to review them.
 
-This system solves that problem by combining:
+For each proposed use case, the app can collect:
 
-* structured discovery interviews
-* role-aware questioning
-* cross-stakeholder knowledge aggregation
-* automated AI opportunity analysis
-* feasibility and value scoring
+- a practical opinion in free text
+- a usefulness rating from `1` to `5`
+- scope feedback when the use case belongs to another team or manager
+- feasibility feedback when the interviewee is in a position to judge it
 
-Instead of analyzing processes externally, the system collects **first-hand operational insights directly from employees** and converts them into structured AI opportunities.
+The end-of-interview feasibility review is use-case-specific. The app separately judges whether the interviewee can comment on:
 
-\---
+- data quality and availability
+- regulatory or compliance risk
+- explainability or auditability requirements
 
-# Key Features
+Those feasibility questions are asked one dimension at a time, only when they are relevant to that particular use case and that particular interviewee.
 
-## Multi‑Stakeholder Discovery
+---
 
-Interview multiple employees across the same organization and progressively build knowledge of workflows, bottlenecks, and automation opportunities.
+# Company Memory And Drafts
 
-## Role‑Aware Interviewing
+The app keeps two kinds of persistent memory:
 
-Questions automatically adapt based on seniority:
+Interview drafts
 
-Executive  
-Strategic priorities and transformation goals.
+- used to restore an in-progress conversation after refresh or reconnect
+- stored in persistent backend storage
+- isolated per browser/client identity in the current setup
 
-Manager  
-Department processes and operational bottlenecks.
+Company insights
 
-Operational Staff  
-Daily tasks and friction points.
+- aggregated across completed interviews
+- include previously identified tasks and AI use cases
+- include employee validation feedback on proposed use cases
+- now also include aggregated feasibility feedback such as:
+  - average usefulness rating
+  - average data-quality readiness score
+  - average explainability score
+  - regulatory-risk distribution
+  - safe-to-pursue signals
 
-## Organizational Memory
+---
 
-The system stores insights from previous interviews and uses them to:
+# Unknown Tools And Terms
 
-* avoid repeating questions
-* validate AI use cases
-* accumulate organizational knowledge
+The app no longer assumes that the model already understands every tool or acronym the interviewee mentions.
 
-## Automatic Company Context
+If the interviewee introduces a named tool, system, acronym, or internal term that looks important to the workflow, the app can:
 
-The system automatically retrieves company information from the web and asks the user to confirm it before continuing.
+- ask the interviewee to explain what it is
+- look for public context online when available
+- ask the interviewee to confirm whether that public context is actually the same thing they mean
+- store the clarified explanation and include it in later reasoning and report generation
 
-\---
+This is especially useful for internal tools that are not safe to assume from model pretraining alone.
 
-# AI Opportunity Discovery Framework
-
-The system implements a structured methodology consisting of four analytical stages.
-
-STEP 2 — Task Identification  
-Break down employee work into granular operational tasks.
-
-STEP 3 — AI Use Case Discovery  
-Match high-friction tasks with candidate AI solutions.
-
-STEP 4 — KPI Definition  
-Define measurable success metrics.
-
-STEP 5 — Feasibility Evaluation  
-Evaluate each use case based on data, regulatory constraints, and technical complexity.
-
-\---
+---
 
 # Outputs
 
-Each interview generates:
+Each completed interview produces:
 
-JSON Report  
-Machine-readable structured analysis.
-
-Markdown Report  
-Human-readable AI opportunity report.
+- a structured JSON report
+- a Markdown report
+- persisted company-level insight updates
 
 Reports include:
 
-* Executive summary
-* Task inventory
-* AI use case recommendations
-* Value–feasibility prioritization
-* Implementation recommendations
+- executive summary
+- task inventory
+- proposed AI use cases
+- KPI suggestions
+- feasibility assessment
+- value-feasibility prioritization
+- employee feedback on the proposed use cases
 
-\---
+---
 
-# Data Storage
+# Storage
 
-Database
+Database backends
 
-* SQLite (default)
-* MongoDB (optional)
+- MongoDB Atlas for shared drafts and server deployments
+- SQLite for local-only fallback setups
 
-Report Storage
+Report storage backends
 
-* Local filesystem
-* S3-compatible object storage
+- S3-compatible object storage
+- local filesystem fallback
 
-\---
+Current configuration is controlled from `.env`.
 
-# Example Use Cases
+---
 
-Academic Research  
-Structured data collection for AI transformation studies.
+# Project Structure
 
-Consulting  
-Rapid discovery of AI opportunities within organizations.
+Important files and modules:
 
-Internal Innovation  
-Identify automation opportunities across departments.
+- [app/chainlit_app.py](/root/discovery/app/chainlit_app.py)
+  Chainlit entrypoint and main runtime wiring
+- [app/company_flow.py](/root/discovery/app/company_flow.py)
+  metadata collection and company confirmation flow
+- [app/question_flow.py](/root/discovery/app/question_flow.py)
+  notes updates, readiness checks, and next-question planning
+- [app/interview_flow.py](/root/discovery/app/interview_flow.py)
+  company-confirmation handling, closeout flow, and use-case review logic
+- [app/feedback_flow.py](/root/discovery/app/feedback_flow.py)
+  report finalization and use-case feedback persistence
+- [app/term_discovery.py](/root/discovery/app/term_discovery.py)
+  clarification and public lookup for unknown tools and terms
+- [app/company_research.py](/root/discovery/app/company_research.py)
+  company website and public web research
+- [app/db.py](/root/discovery/app/db.py)
+  MongoDB / SQLite persistence
+- [public/branding.js](/root/discovery/public/branding.js)
+  favicon and browser branding
+- [public/custom.css](/root/discovery/public/custom.css)
+  UI styling and logo behavior
+- [scripts/docker-run.sh](/root/discovery/scripts/docker-run.sh)
+  build-and-run script used for Docker-based runs
 
-Investment Due Diligence  
-Assess AI potential in portfolio companies.
+---
 
-\---
+# Environment Notes
+
+The provided `.env.example` includes:
+
+- OpenAI model settings
+- optional SerpAPI support for better public lookup
+- MongoDB Atlas settings
+- S3-compatible report storage settings
+- local SQLite and local report fallbacks
+
+For server use, MongoDB Atlas and S3-compatible report storage are the intended default path.
+
+---
 
 # Contact
 
@@ -228,4 +280,3 @@ Konstantinos Tolanoudis
 ETH Zurich
 
 ktolanoudis@ethz.ch
-
