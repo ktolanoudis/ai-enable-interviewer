@@ -282,6 +282,27 @@ async def handle_collection_step(collection_step: str, user_input: str, save_che
         messages.append({"role": "user", "content": user_input})
         cl.user_session.set("messages", messages)
         cl.user_session.set("collection_step", None)
+
+        if str(parsed.get("intent", "")).strip().lower() in {"skip", "anonymous"}:
+            next_step = next_collection_step(metadata)
+            if next_step:
+                cl.user_session.set("post_company_confirmation_step", next_step)
+                cl.user_session.set("post_company_confirmation_prompt", collection_prompt_for_step(next_step))
+            else:
+                cl.user_session.set("post_company_confirmation_step", None)
+                cl.user_session.set("post_company_confirmation_prompt", "")
+            cl.user_session.set("awaiting_company_description", True)
+            prompt = (
+                "Please describe in 1-2 sentences what your company does "
+                "(industry, main products/services, and typical customers).\n\n"
+                "After that, I'll confirm my understanding and continue the interview."
+            )
+            messages.append({"role": "assistant", "content": prompt})
+            cl.user_session.set("messages", messages)
+            await send_assistant_message(prompt)
+            save_checkpoint(message)
+            return True
+
         await run_company_setup(save_checkpoint, message)
         return True
 

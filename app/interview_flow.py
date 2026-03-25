@@ -194,23 +194,22 @@ Please briefly describe what your company does (1-2 sentences), or type 'skip' t
     if cl.user_session.get("awaiting_company_description"):
         cl.user_session.set("awaiting_company_description", False)
         cl.user_session.set("company_context_confirmed", False)
-        start_prompt = _start_prompt_from_session()
         messages = cl.user_session.get("messages") or []
 
         if user_input.lower() != "skip":
             metadata = cl.user_session.get("metadata") or {}
             metadata["company_description_user"] = user_input
             cl.user_session.set("metadata", metadata)
-            cl.user_session.set("awaiting_company_description_confirmation", True)
-            confirm_msg = (
-                "Thanks. Just to confirm: your company "
-                f"does the following: {user_input}\n\n"
-                "**Is that correct?** (yes/no)"
-            )
+            cl.user_session.set("awaiting_company_description_confirmation", False)
+            cl.user_session.set("company_context_confirmed", True)
+            next_prompt = _resume_collection_or_interview()
+            if cl.user_session.get("collection_step") is None:
+                cl.user_session.set("post_company_confirmation_prompt", "")
+            continue_msg = f"Thanks.\n\n{next_prompt}"
             messages.append({"role": "user", "content": user_input})
-            messages.append({"role": "assistant", "content": confirm_msg})
+            messages.append({"role": "assistant", "content": continue_msg})
             cl.user_session.set("messages", messages)
-            await send_assistant_message(confirm_msg)
+            await send_assistant_message(continue_msg)
             save_checkpoint(message)
             return True
 

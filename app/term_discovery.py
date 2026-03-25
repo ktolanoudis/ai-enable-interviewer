@@ -9,6 +9,40 @@ from ai_client import MODEL, get_client
 REQUEST_TIMEOUT_SECONDS = 10
 
 
+def infer_public_term_context(term: str, company: str = "") -> Optional[str]:
+    prompt = {
+        "term": term,
+        "company": company,
+    }
+    system_prompt = """You infer likely public context for a named tool or platform mentioned in a work interview.
+
+Rules:
+- Only return a likely public description when the term is a well-known public product, platform, or service.
+- If the term is ambiguous, internal-sounding, or not confidently identifiable, return JSON with found=false.
+- Keep the description to 1-2 cautious sentences.
+- If relevant, mention uncertainty briefly instead of pretending certainty.
+- Return only valid JSON with:
+  - found: boolean
+  - context: string
+"""
+    try:
+        resp = get_client().chat.completions.create(
+            model=MODEL,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": json.dumps(prompt)},
+            ],
+            response_format={"type": "json_object"},
+        )
+        data = json.loads(resp.choices[0].message.content or "{}")
+        if bool(data.get("found")):
+            context = str(data.get("context", "") or "").strip()
+            return context or None
+    except Exception:
+        pass
+    return None
+
+
 def _known_term_names(metadata: dict) -> set[str]:
     items = metadata.get("term_contexts") or []
     names = set()
@@ -155,18 +189,18 @@ def lookup_term_context(term: str, company: str = "") -> Optional[str]:
     ddg = search_term_with_ddg(term, company)
     if ddg:
         return synthesize_term_context(term, company, ddg)
-    return None
+    return infer_public_term_context(term, company)
 
 
 def build_term_clarification_prompt(term: str, public_context: Optional[str]) -> str:
     if public_context:
         return (
-            f'You mentioned "{term}". I found this possible public description:\n\n'
-            f"{public_context}\n\n"
-            f'Is that the same "{term}" you mean in your workflow? If not, what is it, and what do you mainly use it for?'
+            f'You mentioned "{term}".\n\n'
+            f"From the context, this may refer to: {public_context}\n\n"
+            f'Is that the same "{term}" you mean in your workflow? If not, what is it and what do you mainly use it for?'
         )
     return (
-        f'You mentioned "{term}". I do not want to guess what that means in your workflow.\n\n'
+        f'You mentioned "{term}".\n\n'
         f'What is "{term}", and what do you mainly use it for in your work?'
     )
 
