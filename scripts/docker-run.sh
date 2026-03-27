@@ -61,11 +61,13 @@ docker rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
 
 if [ "${db_backend}" = "mongodb" ] && [ -n "${mongodb_uri}" ]; then
   docker run -d --name "${CONTAINER_NAME}" -p "${host_port}:${container_port}" \
+    --restart unless-stopped \
     --env-file .env \
     "${IMAGE_NAME}"
 else
   mkdir -p data reports
   docker run -d --name "${CONTAINER_NAME}" -p "${host_port}:${container_port}" \
+    --restart unless-stopped \
     --env-file .env \
     -e SQLITE_DB_PATH=/app/data/sessions.db \
     -e LOCAL_REPORTS_DIR=/app/reports \
