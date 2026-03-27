@@ -378,8 +378,42 @@ async def maybe_handle_closure_phase(user_input: str, message, save_checkpoint, 
         has_substantive_opinion = bool(opinion_interpretation.get("has_substantive_opinion"))
         extracted_opinion = str(opinion_interpretation.get("opinion_text", "") or "").strip()
         included_rating = opinion_interpretation.get("included_rating")
+        skipped_opinion = str(user_input or "").strip().lower() == "skip"
 
-        if parsed_rating_at_opinion_step is not None and not has_substantive_opinion:
+        if skipped_opinion:
+            messages.append({"role": "user", "content": user_input})
+            cl.user_session.set("messages", messages)
+
+            if index >= len(use_cases):
+                await _close_from_state(
+                    send_assistant_message,
+                    messages,
+                    report_payload=report_payload,
+                    use_case_feedback=cl.user_session.get("use_case_feedback_entries") or [],
+                )
+                save_checkpoint(message)
+                return True
+
+            current_use_case = use_cases[index]
+            current_feedback = {
+                "use_case_name": current_use_case.get("use_case_name", "AI Use Case"),
+                "description": current_use_case.get("description", ""),
+                "rating": None,
+                "comment": "",
+                "feasibility_feedback": {},
+            }
+            cl.user_session.set("current_use_case_feedback", current_feedback)
+            cl.user_session.set("awaiting_use_case_opinion", False)
+            cl.user_session.set("awaiting_use_case_rating", True)
+
+            rating_prompt = build_use_case_rating_followup()
+            messages.append({"role": "assistant", "content": rating_prompt})
+            cl.user_session.set("messages", messages)
+            await send_assistant_message(rating_prompt)
+            save_checkpoint(message)
+            return True
+
+        if parsed_rating_at_opinion_step is not None and parsed_rating_at_opinion_step != "skip" and not has_substantive_opinion:
             retry = (
                 "Before the rating, please tell me briefly in your own words "
                 "how useful or not useful this seems for your work."
@@ -462,13 +496,13 @@ async def maybe_handle_closure_phase(user_input: str, message, save_checkpoint, 
             "use_case_name": current_use_case.get("use_case_name", "AI Use Case"),
             "description": current_use_case.get("description", ""),
             "rating": None,
-            "comment": "" if user_input.lower() == "skip" else (extracted_opinion or user_input),
+            "comment": "" if skipped_opinion else (extracted_opinion or user_input),
             "feasibility_feedback": {},
         }
         cl.user_session.set("current_use_case_feedback", current_feedback)
         cl.user_session.set("awaiting_use_case_opinion", False)
 
-        if included_rating is not None:
+        if included_rating is not None and included_rating != "skip":
             current_feedback["rating"] = None if included_rating == "skip" else int(included_rating)
             cl.user_session.set("current_use_case_feedback", current_feedback)
             return await _begin_use_case_feasibility_or_advance(

@@ -13,7 +13,7 @@ sys.path.append(os.path.dirname(__file__))
 load_dotenv(override=False)
 
 from db import init_db, get_interview_checkpoint
-from meta_question_handler import (classify_answer_completeness, classify_message_intent, generate_meta_response,
+from meta_question_handler import (classify_answer_completeness, classify_confirmation_response, classify_message_intent, generate_meta_response,
                                    generate_uncertainty_recovery)
 from interview_readiness import (
     is_answer_too_short,
@@ -317,7 +317,7 @@ async def main(message: cl.Message):
         return
     
     # Input validation (only for non-meta questions)
-    if (not stop_addendum_mode) and is_answer_too_short(user_input):
+    if (not stop_addendum_mode) and (not cl.user_session.get("awaiting_term_details", False)) and is_answer_too_short(user_input):
         completeness = classify_answer_completeness(user_input, context, messages)
         if completeness.get("intent") == "too_short":
             await send_assistant_message("Could you provide a bit more detail? (Or type 'skip' to move on)")
@@ -338,15 +338,49 @@ Additional details:
     if cl.user_session.get("awaiting_term_details", False):
         metadata = cl.user_session.get("metadata") or {}
         term_payload = cl.user_session.get("current_term_candidate") or {}
-        metadata = save_term_context(
-            metadata,
-            str(term_payload.get("term", "")).strip(),
-            str(term_payload.get("public_context", "")).strip(),
-            user_input,
-        )
-        cl.user_session.set("metadata", metadata)
-        cl.user_session.set("awaiting_term_details", False)
-        cl.user_session.set("current_term_candidate", None)
+        term = str(term_payload.get("term", "")).strip()
+        public_context = str(term_payload.get("public_context", "")).strip()
+        awaiting_confirmation = bool(term_payload.get("awaiting_confirmation"))
+
+        if awaiting_confirmation and public_context:
+            confirmation = classify_confirmation_response(user_input, "term_confirmation", messages)
+            if confirmation.get("intent") == "yes":
+                metadata = save_term_context(metadata, term, public_context, public_context)
+                cl.user_session.set("metadata", metadata)
+                cl.user_session.set("awaiting_term_details", False)
+                cl.user_session.set("current_term_candidate", None)
+            elif confirmation.get("intent") in {"no", "correction", "other"}:
+                followup = (
+                    f'Understood. What is "{term}" in your workflow, and what do you mainly use it for?'
+                )
+                cl.user_session.set(
+                    "current_term_candidate",
+                    {
+                        "term": term,
+                        "public_context": public_context,
+                        "awaiting_confirmation": False,
+                    },
+                )
+                messages.append({"role": "assistant", "content": followup})
+                cl.user_session.set("messages", messages)
+                await send_assistant_message(followup)
+                save_checkpoint(message)
+                return
+            else:
+                metadata = save_term_context(metadata, term, public_context, user_input)
+                cl.user_session.set("metadata", metadata)
+                cl.user_session.set("awaiting_term_details", False)
+                cl.user_session.set("current_term_candidate", None)
+        else:
+            metadata = save_term_context(
+                metadata,
+                term,
+                public_context,
+                user_input,
+            )
+            cl.user_session.set("metadata", metadata)
+            cl.user_session.set("awaiting_term_details", False)
+            cl.user_session.set("current_term_candidate", None)
     else:
         metadata = cl.user_session.get("metadata") or {}
         term_candidate = identify_term_candidate(user_input, messages, metadata)
@@ -360,6 +394,7 @@ Additional details:
                 {
                     "term": term,
                     "public_context": public_context or "",
+                    "awaiting_confirmation": bool(public_context),
                 },
             )
             messages.append({"role": "assistant", "content": followup})

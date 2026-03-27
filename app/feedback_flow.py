@@ -327,7 +327,7 @@ async def close_interview(send_assistant_message, messages: list, transcript: st
         md_content = generate_markdown_report(report, metadata)
         md_content = append_use_case_feedback_markdown(md_content, use_case_feedback or [])
         report_json = serialize_report_payload(report, use_case_feedback or [])
-        persist_report_files(session_id, report_json, md_content)
+        file_locations = persist_report_files(session_id, report_json, md_content)
         save_session(
             company=metadata["company"],
             employee=metadata["employee_name"],
@@ -346,6 +346,29 @@ async def close_interview(send_assistant_message, messages: list, transcript: st
             use_cases=[uc.model_dump() for uc in report.use_cases],
             validated_use_cases=build_validated_use_case_entries(use_case_feedback or [], metadata),
         )
+
+        download_elements = [
+            cl.File(
+                name=f"report_{session_id}.md",
+                content=md_content,
+                display="inline",
+                mime="text/markdown",
+            ),
+            cl.File(
+                name=f"report_{session_id}.json",
+                content=report_json,
+                display="inline",
+                mime="application/json",
+            ),
+        ]
+
+        if download_elements:
+            download_msg = cl.Message(
+                content="Your report is ready. You can download it below.",
+                author="Interviewer",
+                elements=download_elements,
+            )
+            await download_msg.send()
     except Exception:
         traceback.print_exc()
         return
