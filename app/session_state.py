@@ -4,6 +4,8 @@ import os
 
 import chainlit as cl
 
+from interview_readiness import count_user_turns, evaluate_notes_readiness
+
 DEBUG_QUESTION_FLOW = os.getenv("DEBUG_QUESTION_FLOW", "").strip().lower() in {"1", "true", "yes", "on"}
 OPENAI_MODEL_NAME = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 STOP_ADDENDUM_WINDOW_SECONDS = 300
@@ -131,3 +133,84 @@ def init_session_state() -> None:
     cl.user_session.set("use_case_feedback_entries", [])
     cl.user_session.set("current_use_case_feedback", None)
     cl.user_session.set("current_use_case_feasibility_scope", None)
+
+
+def compute_interview_progress() -> float:
+    if cl.user_session.get("report_done"):
+        return 1.0
+
+    collection_step = cl.user_session.get("collection_step")
+    if collection_step and collection_step != "__closed__":
+        ordered_steps = ["name", "company", "company_website", "email", "department", "role"]
+        try:
+            index = ordered_steps.index(str(collection_step))
+        except ValueError:
+            index = 0
+        return min(0.22, 0.04 + (index / max(1, len(ordered_steps) - 1)) * 0.18)
+
+    if (
+        cl.user_session.get("awaiting_company_confirmation")
+        or cl.user_session.get("awaiting_company_description")
+        or cl.user_session.get("awaiting_company_description_confirmation")
+    ):
+        return 0.24
+
+    if cl.user_session.get("awaiting_final_confirmation"):
+        return 0.8
+
+    if cl.user_session.get("awaiting_use_case_feedback_consent"):
+        return 0.84
+
+    pending_report_payload = cl.user_session.get("pending_report_payload") or {}
+    use_cases = pending_report_payload.get("use_cases") or []
+    if use_cases and (
+        cl.user_session.get("awaiting_use_case_opinion")
+        or cl.user_session.get("awaiting_use_case_scope_resolution")
+        or cl.user_session.get("awaiting_use_case_rating")
+        or cl.user_session.get("awaiting_use_case_feasibility")
+    ):
+        index = int(cl.user_session.get("use_case_feedback_index", 0) or 0)
+        total = max(1, len(use_cases))
+        base = 0.84 + (min(index, total) / total) * 0.14
+        if cl.user_session.get("awaiting_use_case_opinion"):
+            step_fraction = 0.02
+        elif cl.user_session.get("awaiting_use_case_scope_resolution"):
+            step_fraction = 0.04
+        elif cl.user_session.get("awaiting_use_case_rating"):
+            step_fraction = 0.07
+        elif cl.user_session.get("awaiting_use_case_feasibility"):
+            step_fraction = 0.1
+        else:
+            step_fraction = 0.0
+        return min(0.98, base + step_fraction / total)
+
+    notes = cl.user_session.get("notes") or {}
+    seniority_level = cl.user_session.get("seniority_level") or "intermediate"
+    readiness = evaluate_notes_readiness(notes, seniority_level)
+    thresholds = {
+        "executive": {"tasks": 2, "friction_points": 1, "goals_kpis": 2, "factors": 1, "systems_data": 1},
+        "senior": {"tasks": 3, "friction_points": 2, "goals_kpis": 2, "factors": 1, "systems_data": 1},
+        "intermediate": {"tasks": 5, "friction_points": 3, "goals_kpis": 2, "factors": 1, "systems_data": 1},
+        "junior": {"tasks": 4, "friction_points": 2, "goals_kpis": 1, "factors": 1, "systems_data": 1},
+        "intern": {"tasks": 4, "friction_points": 2, "goals_kpis": 1, "factors": 1, "systems_data": 1},
+    }.get(seniority_level, {"tasks": 4, "friction_points": 2, "goals_kpis": 1, "factors": 1, "systems_data": 1})
+
+    def _ratio(value, target):
+        if not target:
+            return 1.0
+        return min(1.0, float(value) / float(target))
+
+    ratios = [
+        1.0 if (notes.get("role") and notes.get("department")) else 0.0,
+        _ratio(readiness.get("task_described_count", 0), thresholds["tasks"]),
+        _ratio(readiness.get("task_with_friction_count", 0), max(1, thresholds["tasks"] - 1)),
+        _ratio(readiness.get("friction_points_count", 0), thresholds["friction_points"]),
+        _ratio(readiness.get("goals_or_kpis_count", 0), thresholds["goals_kpis"]),
+        _ratio(readiness.get("systems_or_data_count", 0), thresholds["systems_data"]),
+        _ratio(readiness.get("feasibility_signal_count", 0), thresholds["factors"]),
+    ]
+    readiness_ratio = sum(ratios) / len(ratios)
+    streak_ratio = min(1.0, float(cl.user_session.get("deterministic_ready_streak", 0) or 0) / max(1, READY_STREAK_REQUIRED))
+    turn_ratio = min(1.0, float(count_user_turns(cl.user_session.get("messages") or [])) / max(1, MAX_INTERVIEW_USER_TURNS))
+    blended = max(readiness_ratio * 0.82 + streak_ratio * 0.1 + turn_ratio * 0.08, turn_ratio * 0.6)
+    return min(0.78, 0.22 + blended * 0.56)

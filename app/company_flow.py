@@ -5,11 +5,16 @@ from company_research import format_company_context, normalize_website_url, rese
 from conversation_utils import get_interview_strategy_description, has_valid_north_star
 from db import get_company_insights, get_company_interview_count
 from role_classifier import classify_seniority, should_ask_north_star
-from session_state import WELCOME_TEXT
+from session_state import WELCOME_TEXT, compute_interview_progress
 
 
-async def send_assistant_message(content: str) -> None:
-    await cl.Message(content=content, author="Interviewer").send()
+async def send_assistant_message(content: str, actions=None) -> None:
+    progress = max(0.0, min(1.0, compute_interview_progress()))
+    hidden_progress = (
+        f'<div data-interview-progress="{progress:.4f}" '
+        f'style="display:none !important; visibility:hidden !important; height:0; overflow:hidden;"></div>'
+    )
+    await cl.Message(content=content + "\n\n" + hidden_progress, author="Interviewer", actions=actions or []).send()
 
 
 async def send_welcome_prompt() -> None:

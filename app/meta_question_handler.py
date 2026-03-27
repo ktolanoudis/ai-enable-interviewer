@@ -521,7 +521,7 @@ def assess_use_case_feasibility_scope(
         if isinstance(m, dict) and m.get("role") in {"user", "assistant"} and m.get("content")
     ]
 
-    system_prompt = """You assess whether the interviewee is in a good position to judge feasibility aspects of a proposed AI use case.
+    system_prompt = """You assess whether the interviewee is genuinely in a good position to judge specific feasibility aspects of a proposed AI use case.
 
 Return JSON with:
 - can_judge_data_quality: boolean
@@ -529,10 +529,14 @@ Return JSON with:
 - can_judge_explainability: boolean
 
 Rules:
-- Be conservative. Only mark a dimension true if the user likely has enough direct visibility from their role and prior answers.
+- Be strict and conservative. Default to false unless there is strong evidence from the role, department, or prior answers.
 - Data quality means whether the needed data likely exists, is reliable, or is accessible in practice.
 - Regulatory risk means compliance, privacy, legal, or policy constraints.
 - Explainability means whether the AI output would need to be understandable, auditable, or easy to justify to others.
+- For data quality, usually only mark true for clearly technical, data, engineering, IT, analytics, or operational roles with direct system or data visibility.
+- For regulatory risk, usually only mark true for clearly legal, compliance, privacy, risk, policy, or governance roles.
+- For explainability, only mark true for people who would realistically have to justify, audit, validate, or operationalize AI outputs in practice. This can include some technical, analytics, risk, compliance, or governance roles, but not most general business users.
+- Do not infer capability just because the user understands the workflow at a high level.
 - Use the user role, department, and recent conversation context.
 - Return only valid JSON.
 """
@@ -566,91 +570,6 @@ Rules:
         }
 
 
-def extract_use_case_feasibility_feedback(
-    user_message: str,
-    use_case_context: str = "",
-    scope: Optional[dict] = None,
-    history: Optional[list] = None,
-) -> dict:
-    recent_history = [
-        {"role": m.get("role"), "content": m.get("content", "")}
-        for m in (history or [])[-10:]
-        if isinstance(m, dict) and m.get("role") in {"user", "assistant"} and m.get("content")
-    ]
-
-    system_prompt = """You extract structured feasibility feedback about a proposed AI use case from an interviewee's free-text answer.
-
-Return JSON with:
-- summary_comment: string
-- data_quality_score: integer 1-5 or null
-- data_quality_comment: string
-- regulatory_risk_level: one of "low", "medium", "high", "critical", "unknown"
-- regulatory_comment: string
-- explainability_score: integer 1-5 or null
-- explainability_comment: string
-- safe_to_pursue: one of "yes", "no", "unclear"
-
-Interpretation rules:
-- data_quality_score: 1 means data looks unusable/unavailable, 5 means data looks strong and usable.
-- explainability_score: 1 means low explainability need, 5 means strong explainability/auditability need.
-- If the user clearly says they cannot judge a dimension, use null or "unknown" and note that in the comment.
-- Only fill dimensions that are in scope. For out-of-scope dimensions, return null or "unknown".
-- Return only valid JSON.
-"""
-
-    payload = {
-        "use_case_context": use_case_context,
-        "scope": scope or {},
-        "recent_history": recent_history,
-        "user_message": user_message,
-    }
-
-    try:
-        resp = get_client().chat.completions.create(
-            model=MODEL,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": json.dumps(payload)},
-            ],
-            response_format={"type": "json_object"},
-        )
-        data = json.loads(resp.choices[0].message.content or "{}")
-
-        def _score(value):
-            if isinstance(value, int) and 1 <= value <= 5:
-                return value
-            return None
-
-        risk = str(data.get("regulatory_risk_level", "unknown")).strip().lower()
-        if risk not in {"low", "medium", "high", "critical", "unknown"}:
-            risk = "unknown"
-        safe = str(data.get("safe_to_pursue", "unclear")).strip().lower()
-        if safe not in {"yes", "no", "unclear"}:
-            safe = "unclear"
-
-        return {
-            "summary_comment": str(data.get("summary_comment", "")).strip(),
-            "data_quality_score": _score(data.get("data_quality_score")),
-            "data_quality_comment": str(data.get("data_quality_comment", "")).strip(),
-            "regulatory_risk_level": risk,
-            "regulatory_comment": str(data.get("regulatory_comment", "")).strip(),
-            "explainability_score": _score(data.get("explainability_score")),
-            "explainability_comment": str(data.get("explainability_comment", "")).strip(),
-            "safe_to_pursue": safe,
-        }
-    except Exception:
-        return {
-            "summary_comment": str(user_message or "").strip(),
-            "data_quality_score": None,
-            "data_quality_comment": "",
-            "regulatory_risk_level": "unknown",
-            "regulatory_comment": "",
-            "explainability_score": None,
-            "explainability_comment": "",
-            "safe_to_pursue": "unclear",
-        }
-
-
 def extract_single_feasibility_dimension_feedback(
     dimension: str,
     user_message: str,
@@ -663,27 +582,24 @@ def extract_single_feasibility_dimension_feedback(
         if isinstance(m, dict) and m.get("role") in {"user", "assistant"} and m.get("content")
     ]
 
-    system_prompt = """You extract one specific feasibility judgment about a proposed AI use case from an interviewee's free-text answer.
+    system_prompt = """You extract the interviewee's comment about one specific feasibility dimension for a proposed AI use case.
 
 Return JSON only.
 
 If dimension = "data_quality", return:
-- score: integer 1-5 or null
 - comment: string
 
-Interpretation: 1 means very poor or unavailable data, 5 means strong and usable data.
-
 If dimension = "regulatory_risk", return:
-- level: one of "low", "medium", "high", "critical", "unknown"
 - comment: string
 
 If dimension = "explainability", return:
-- score: integer 1-5 or null
 - comment: string
 
-Interpretation: 1 means little explainability need, 5 means strong need for explainability, auditability, or justification.
-
-If the user says they cannot judge that dimension, use null or "unknown" and capture that in the comment.
+Rules:
+- Capture only the employee's view in comment form.
+- Do not assign scores, levels, or your own judgment.
+- Preserve uncertainty if the user says they cannot judge that dimension.
+- Keep the meaning faithful to the user's answer.
 """
 
     payload = {
@@ -703,19 +619,9 @@ If the user says they cannot judge that dimension, use null or "unknown" and cap
             response_format={"type": "json_object"},
         )
         data = json.loads(resp.choices[0].message.content or "{}")
-        if dimension == "regulatory_risk":
-            level = str(data.get("level", "unknown")).strip().lower()
-            if level not in {"low", "medium", "high", "critical", "unknown"}:
-                level = "unknown"
-            return {"level": level, "comment": str(data.get("comment", "")).strip()}
-        score = data.get("score")
-        if not (isinstance(score, int) and 1 <= score <= 5):
-            score = None
-        return {"score": score, "comment": str(data.get("comment", "")).strip()}
+        return {"comment": str(data.get("comment", "")).strip()}
     except Exception:
-        if dimension == "regulatory_risk":
-            return {"level": "unknown", "comment": str(user_message or "").strip()}
-        return {"score": None, "comment": str(user_message or "").strip()}
+        return {"comment": str(user_message or "").strip()}
 
 
 def classify_answer_completeness(

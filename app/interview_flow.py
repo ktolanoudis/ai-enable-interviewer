@@ -2,6 +2,7 @@ import chainlit as cl
 
 from conversation_utils import build_analysis_transcript, paraphrase_repeated_question
 from feedback_flow import (
+    build_use_case_rating_actions,
     begin_use_case_feedback,
     build_use_case_feasibility_prompt,
     build_use_case_rating_followup,
@@ -15,7 +16,6 @@ from meta_question_handler import (
     classify_use_case_feedback_response,
     classify_use_case_scope_resolution,
     extract_single_feasibility_dimension_feedback,
-    extract_use_case_feasibility_feedback,
     generate_use_case_feedback_clarification,
     generate_use_case_feedback_scope_followup,
     generate_use_case_feedback_structural_followup,
@@ -70,6 +70,83 @@ async def _close_from_state(send_assistant_message, messages: list, report_paylo
         interview_count,
         report_payload=report_payload,
         use_case_feedback=use_case_feedback,
+    )
+
+
+async def _send_use_case_rating_prompt(send_assistant_message, messages: list, prompt: str):
+    actions = build_use_case_rating_actions()
+    messages.append({"role": "assistant", "content": prompt})
+    cl.user_session.set("messages", messages)
+    await send_assistant_message(prompt, actions=actions)
+
+
+async def _handle_use_case_rating_submission(
+    user_input: str,
+    message,
+    save_checkpoint,
+    send_assistant_message,
+):
+    messages = cl.user_session.get("messages") or []
+    messages.append({"role": "user", "content": user_input})
+    cl.user_session.set("messages", messages)
+
+    parsed_rating = parse_use_case_rating(user_input)
+    if parsed_rating is None:
+        retry = "Please rate this use case from 1 to 5, or type 'skip' if you do not want to score it."
+        retry = paraphrase_repeated_question(
+            retry,
+            messages,
+            fallback="Please give this use case a rating from 1 to 5, or say skip if you do not want to score it.",
+        )
+        await _send_use_case_rating_prompt(send_assistant_message, messages, retry)
+        save_checkpoint(message)
+        return True
+
+    report_payload = cl.user_session.get("pending_report_payload") or {}
+    use_cases = report_payload.get("use_cases") or []
+    index = int(cl.user_session.get("use_case_feedback_index", 0) or 0)
+    if index >= len(use_cases):
+        await _close_from_state(
+            send_assistant_message,
+            messages,
+            report_payload=report_payload,
+            use_case_feedback=cl.user_session.get("use_case_feedback_entries") or [],
+        )
+        save_checkpoint(message)
+        return True
+
+    use_case_context = ""
+    if 0 <= index < len(use_cases):
+        use_case_context = "\n".join(
+            part for part in [
+                str(use_cases[index].get("use_case_name", "")).strip(),
+                str(use_cases[index].get("description", "")).strip(),
+                str(use_cases[index].get("expected_impact", "")).strip(),
+            ] if part
+        )
+    rating_interpretation = interpret_use_case_rating_response(user_input, use_case_context, messages)
+    interpreted_rating = rating_interpretation.get("rating")
+    rating_comment = str(rating_interpretation.get("comment_text", "") or "").strip()
+    effective_rating = interpreted_rating if interpreted_rating is not None else parsed_rating
+    rating_value = None if effective_rating == "skip" else int(effective_rating)
+    current_feedback = cl.user_session.get("current_use_case_feedback") or {}
+    current_feedback["rating"] = rating_value
+    existing_comment = str(current_feedback.get("comment", "") or "").strip()
+    if rating_comment:
+        current_feedback["comment"] = "\n".join(
+            part for part in [existing_comment, rating_comment] if part
+        ).strip()
+    cl.user_session.set("current_use_case_feedback", current_feedback)
+    cl.user_session.set("awaiting_use_case_rating", False)
+    return await _begin_use_case_feasibility_or_advance(
+        send_assistant_message,
+        save_checkpoint,
+        message,
+        messages,
+        report_payload,
+        use_cases,
+        index,
+        current_feedback,
     )
 
 
@@ -161,7 +238,7 @@ async def maybe_handle_company_context_phase(user_input: str, message, save_chec
     if cl.user_session.get("awaiting_company_confirmation"):
         messages = cl.user_session.get("messages") or []
         confirmation = classify_confirmation_response(user_input, "company_confirmation", messages)
-        if confirmation.get("intent") in {"correction", "no", "other"}:
+        if confirmation.get("intent") in {"correction", "no"}:
             cl.user_session.set("awaiting_company_confirmation", False)
             cl.user_session.set("company_context_confirmed", False)
             cl.user_session.set("post_company_confirmation_prompt", "")
@@ -173,6 +250,15 @@ Please briefly describe what your company does (1-2 sentences), or type 'skip' t
             cl.user_session.set("messages", messages)
             cl.user_session.set("awaiting_company_description", True)
             await send_assistant_message(correction_msg)
+            save_checkpoint(message)
+            return True
+
+        if confirmation.get("intent") == "other":
+            retry_msg = "I didn't catch that. Do you mean yes, the company description is accurate, or no, it needs correcting?"
+            messages.append({"role": "user", "content": user_input})
+            messages.append({"role": "assistant", "content": retry_msg})
+            cl.user_session.set("messages", messages)
+            await send_assistant_message(retry_msg)
             save_checkpoint(message)
             return True
 
@@ -248,6 +334,15 @@ Now let's begin the interview.
             messages.append({"role": "assistant", "content": continue_msg})
             cl.user_session.set("messages", messages)
             await send_assistant_message(continue_msg)
+            save_checkpoint(message)
+            return True
+
+        if confirmation.get("intent") == "other":
+            retry_msg = "I didn't catch that. Do you mean yes, that description is right, or no, you want to rephrase it?"
+            messages.append({"role": "user", "content": user_input})
+            messages.append({"role": "assistant", "content": retry_msg})
+            cl.user_session.set("messages", messages)
+            await send_assistant_message(retry_msg)
             save_checkpoint(message)
             return True
 
@@ -407,9 +502,7 @@ async def maybe_handle_closure_phase(user_input: str, message, save_checkpoint, 
             cl.user_session.set("awaiting_use_case_rating", True)
 
             rating_prompt = build_use_case_rating_followup()
-            messages.append({"role": "assistant", "content": rating_prompt})
-            cl.user_session.set("messages", messages)
-            await send_assistant_message(rating_prompt)
+            await _send_use_case_rating_prompt(send_assistant_message, messages, rating_prompt)
             save_checkpoint(message)
             return True
 
@@ -519,9 +612,7 @@ async def maybe_handle_closure_phase(user_input: str, message, save_checkpoint, 
         cl.user_session.set("awaiting_use_case_rating", True)
 
         rating_prompt = build_use_case_rating_followup()
-        messages.append({"role": "assistant", "content": rating_prompt})
-        cl.user_session.set("messages", messages)
-        await send_assistant_message(rating_prompt)
+        await _send_use_case_rating_prompt(send_assistant_message, messages, rating_prompt)
         save_checkpoint(message)
         return True
 
@@ -581,9 +672,7 @@ async def maybe_handle_closure_phase(user_input: str, message, save_checkpoint, 
             cl.user_session.set("awaiting_use_case_scope_resolution", False)
             cl.user_session.set("awaiting_use_case_rating", True)
             rating_prompt = build_use_case_rating_followup()
-            messages.append({"role": "assistant", "content": rating_prompt})
-            cl.user_session.set("messages", messages)
-            await send_assistant_message(rating_prompt)
+            await _send_use_case_rating_prompt(send_assistant_message, messages, rating_prompt)
             save_checkpoint(message)
             return True
 
@@ -595,69 +684,11 @@ async def maybe_handle_closure_phase(user_input: str, message, save_checkpoint, 
         return True
 
     if cl.user_session.get("awaiting_use_case_rating", False):
-        messages = cl.user_session.get("messages") or []
-        messages.append({"role": "user", "content": user_input})
-        cl.user_session.set("messages", messages)
-
-        parsed_rating = parse_use_case_rating(user_input)
-        if parsed_rating is None:
-            retry = "Please rate this use case from 1 to 5, or type 'skip' if you do not want to score it."
-            retry = paraphrase_repeated_question(
-                retry,
-                messages,
-                fallback="Please give this use case a rating from 1 to 5, or say skip if you do not want to score it.",
-            )
-            messages.append({"role": "assistant", "content": retry})
-            cl.user_session.set("messages", messages)
-            await send_assistant_message(retry)
-            save_checkpoint(message)
-            return True
-
-        report_payload = cl.user_session.get("pending_report_payload") or {}
-        use_cases = report_payload.get("use_cases") or []
-        index = int(cl.user_session.get("use_case_feedback_index", 0) or 0)
-        if index >= len(use_cases):
-            await _close_from_state(
-                send_assistant_message,
-                messages,
-                report_payload=report_payload,
-                use_case_feedback=cl.user_session.get("use_case_feedback_entries") or [],
-            )
-            save_checkpoint(message)
-            return True
-
-        use_case_context = ""
-        if 0 <= index < len(use_cases):
-            use_case_context = "\n".join(
-                part for part in [
-                    str(use_cases[index].get("use_case_name", "")).strip(),
-                    str(use_cases[index].get("description", "")).strip(),
-                    str(use_cases[index].get("expected_impact", "")).strip(),
-                ] if part
-            )
-        rating_interpretation = interpret_use_case_rating_response(user_input, use_case_context, messages)
-        interpreted_rating = rating_interpretation.get("rating")
-        rating_comment = str(rating_interpretation.get("comment_text", "") or "").strip()
-        effective_rating = interpreted_rating if interpreted_rating is not None else parsed_rating
-        rating_value = None if effective_rating == "skip" else int(effective_rating)
-        current_feedback = cl.user_session.get("current_use_case_feedback") or {}
-        current_feedback["rating"] = rating_value
-        existing_comment = str(current_feedback.get("comment", "") or "").strip()
-        if rating_comment:
-            current_feedback["comment"] = "\n".join(
-                part for part in [existing_comment, rating_comment] if part
-            ).strip()
-        cl.user_session.set("current_use_case_feedback", current_feedback)
-        cl.user_session.set("awaiting_use_case_rating", False)
-        return await _begin_use_case_feasibility_or_advance(
-            send_assistant_message,
-            save_checkpoint,
+        return await _handle_use_case_rating_submission(
+            user_input,
             message,
-            messages,
-            report_payload,
-            use_cases,
-            index,
-            current_feedback,
+            save_checkpoint,
+            send_assistant_message,
         )
 
     if cl.user_session.get("awaiting_use_case_feasibility", False):
@@ -690,13 +721,10 @@ async def maybe_handle_closure_phase(user_input: str, message, save_checkpoint, 
             messages,
         )
         if current_dimension == "data_quality":
-            feasibility_feedback["data_quality_score"] = extracted.get("score")
             feasibility_feedback["data_quality_comment"] = extracted.get("comment", "")
         elif current_dimension == "regulatory_risk":
-            feasibility_feedback["regulatory_risk_level"] = extracted.get("level", "unknown")
             feasibility_feedback["regulatory_comment"] = extracted.get("comment", "")
         elif current_dimension == "explainability":
-            feasibility_feedback["explainability_score"] = extracted.get("score")
             feasibility_feedback["explainability_comment"] = extracted.get("comment", "")
 
         pending_dimensions = list(scope.get("pending_dimensions") or [])
@@ -724,22 +752,7 @@ async def maybe_handle_closure_phase(user_input: str, message, save_checkpoint, 
             save_checkpoint(message)
             return True
 
-        summary = extract_use_case_feasibility_feedback(
-            "\n".join(
-                part for part in [
-                    feasibility_feedback.get("data_quality_comment", ""),
-                    feasibility_feedback.get("regulatory_comment", ""),
-                    feasibility_feedback.get("explainability_comment", ""),
-                ] if part
-            ),
-            use_case_context,
-            scope,
-            messages,
-        )
-        current_feedback["feasibility_feedback"] = {
-            **summary,
-            **feasibility_feedback,
-        }
+        current_feedback["feasibility_feedback"] = feasibility_feedback
         cl.user_session.set("current_use_case_feedback", current_feedback)
         cl.user_session.set("awaiting_use_case_feasibility", False)
         cl.user_session.set("current_use_case_feasibility_scope", None)

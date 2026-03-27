@@ -37,7 +37,11 @@ from company_flow import (
     send_assistant_message,
     send_welcome_prompt,
 )
-from interview_flow import maybe_handle_closure_phase, maybe_handle_company_context_phase
+from interview_flow import (
+    maybe_handle_closure_phase,
+    maybe_handle_company_context_phase,
+    _handle_use_case_rating_submission,
+)
 from question_flow import plan_interview_response
 from term_discovery import (
     build_term_clarification_prompt,
@@ -296,7 +300,21 @@ async def main(message: cl.Message):
         if alternative_question:
             stripped = alternative_question.lstrip()
             normalized = stripped.lower().replace("’", "'")
-            if not normalized.startswith("that's okay") and not normalized.startswith("thats okay"):
+            acknowledgement_starts = (
+                "that's okay",
+                "thats okay",
+                "it's okay",
+                "its okay",
+                "it's totally okay",
+                "its totally okay",
+                "it is okay",
+                "it is totally okay",
+                "no problem",
+                "no worries",
+                "that is okay",
+                "that is totally okay",
+            )
+            if not normalized.startswith(acknowledgement_starts):
                 alternative_question = (
                     "That's okay, we can move on to the next question.\n\n"
                     f"{alternative_question}"
@@ -349,7 +367,7 @@ Additional details:
                 cl.user_session.set("metadata", metadata)
                 cl.user_session.set("awaiting_term_details", False)
                 cl.user_session.set("current_term_candidate", None)
-            elif confirmation.get("intent") in {"no", "correction", "other"}:
+            elif confirmation.get("intent") in {"no", "correction"}:
                 followup = (
                     f'Understood. What is "{term}" in your workflow, and what do you mainly use it for?'
                 )
@@ -367,10 +385,14 @@ Additional details:
                 save_checkpoint(message)
                 return
             else:
-                metadata = save_term_context(metadata, term, public_context, user_input)
-                cl.user_session.set("metadata", metadata)
-                cl.user_session.set("awaiting_term_details", False)
-                cl.user_session.set("current_term_candidate", None)
+                followup = (
+                    f'I didn\'t catch that. Do you mean yes, "{term}" is the same tool, or no, it means something else in your workflow?'
+                )
+                messages.append({"role": "assistant", "content": followup})
+                cl.user_session.set("messages", messages)
+                await send_assistant_message(followup)
+                save_checkpoint(message)
+                return
         else:
             metadata = save_term_context(
                 metadata,
@@ -415,3 +437,21 @@ Additional details:
     
     await send_assistant_message(response)
     save_checkpoint(message)
+
+
+@cl.action_callback("use_case_rating")
+async def handle_use_case_rating_action(action):
+    rating_value = ""
+    payload = getattr(action, "payload", None) or {}
+    if isinstance(payload, dict):
+        rating_value = str(payload.get("rating", "")).strip()
+    if not rating_value:
+        rating_value = str(getattr(action, "value", "") or "").strip()
+    if not rating_value:
+        return
+    await _handle_use_case_rating_submission(
+        rating_value,
+        None,
+        save_checkpoint,
+        send_assistant_message,
+    )

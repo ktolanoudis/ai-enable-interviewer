@@ -31,16 +31,17 @@ def append_use_case_feedback_markdown(md_content: str, use_case_feedback: list) 
         lines.append(f"- **Comment:** {reason}" if reason else "- **Comment:** No additional comment provided.")
         if feasibility:
             lines.append("- **Feasibility Review:**")
-            dq = feasibility.get("data_quality_score")
-            rr = feasibility.get("regulatory_risk_level")
-            ex = feasibility.get("explainability_score")
-            safe = feasibility.get("safe_to_pursue")
-            lines.append(f"  - Data quality readiness: {dq}/5" if dq is not None else "  - Data quality readiness: Not assessed")
-            lines.append(f"  - Regulatory risk: {rr}" if rr else "  - Regulatory risk: Not assessed")
-            lines.append(f"  - Explainability need: {ex}/5" if ex is not None else "  - Explainability need: Not assessed")
-            lines.append(f"  - Safe to pursue: {safe}" if safe else "  - Safe to pursue: Unclear")
-            if feasibility.get("summary_comment"):
-                lines.append(f"  - Feasibility comment: {feasibility['summary_comment']}")
+            dq = str(feasibility.get("data_quality_comment", "")).strip()
+            rr = str(feasibility.get("regulatory_comment", "")).strip()
+            ex = str(feasibility.get("explainability_comment", "")).strip()
+            if dq:
+                lines.append(f"  - Data quality / availability: {dq}")
+            if rr:
+                lines.append(f"  - Regulatory / compliance: {rr}")
+            if ex:
+                lines.append(f"  - Explainability: {ex}")
+            if not any([dq, rr, ex]):
+                lines.append("  - No additional feasibility comment provided.")
         lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 
@@ -85,6 +86,25 @@ def build_use_case_rating_prompt(use_case: dict, index: int, total: int) -> str:
 
 def build_use_case_rating_followup() -> str:
     return "How would you rate it from 1 to 5, where 1 means not useful and 5 means very useful? You can also type 'skip'."
+
+
+def build_use_case_rating_actions() -> list:
+    labels = [
+        ("1", "1"),
+        ("2", "2"),
+        ("3", "3"),
+        ("4", "4"),
+        ("5", "5"),
+        ("skip", "Skip"),
+    ]
+    return [
+        cl.Action(
+            name="use_case_rating",
+            payload={"rating": value},
+            label=label,
+        )
+        for value, label in labels
+    ]
 
 
 def build_use_case_feasibility_prompt(dimension: str, is_first: bool = False, variant: int = 0) -> str:
@@ -176,24 +196,6 @@ def build_validated_use_case_entries(feedback_entries: list, metadata: dict) -> 
                 "average_rating": None,
                 "support_count": 0,
                 "concern_count": 0,
-                "data_quality_score_count": 0,
-                "data_quality_score_sum": 0.0,
-                "average_data_quality_score": None,
-                "explainability_score_count": 0,
-                "explainability_score_sum": 0.0,
-                "average_explainability_score": None,
-                "regulatory_risk_counts": {
-                    "low": 0,
-                    "medium": 0,
-                    "high": 0,
-                    "critical": 0,
-                    "unknown": 0,
-                },
-                "safe_to_pursue_counts": {
-                    "yes": 0,
-                    "no": 0,
-                    "unclear": 0,
-                },
                 "comments": [],
                 "last_updated": timestamp,
             },
@@ -207,30 +209,6 @@ def build_validated_use_case_entries(feedback_entries: list, metadata: dict) -> 
             elif rating <= 2:
                 group["concern_count"] += 1
         feasibility = item.get("feasibility_feedback") or {}
-        dq = feasibility.get("data_quality_score")
-        if isinstance(dq, int):
-            group["data_quality_score_count"] += 1
-            group["data_quality_score_sum"] += dq
-            group["average_data_quality_score"] = round(
-                group["data_quality_score_sum"] / group["data_quality_score_count"],
-                2,
-            )
-        ex = feasibility.get("explainability_score")
-        if isinstance(ex, int):
-            group["explainability_score_count"] += 1
-            group["explainability_score_sum"] += ex
-            group["average_explainability_score"] = round(
-                group["explainability_score_sum"] / group["explainability_score_count"],
-                2,
-            )
-        risk = str(feasibility.get("regulatory_risk_level", "unknown")).strip().lower()
-        if risk not in group["regulatory_risk_counts"]:
-            risk = "unknown"
-        group["regulatory_risk_counts"][risk] += 1
-        safe = str(feasibility.get("safe_to_pursue", "unclear")).strip().lower()
-        if safe not in group["safe_to_pursue_counts"]:
-            safe = "unclear"
-        group["safe_to_pursue_counts"][safe] += 1
         if comment or any(feasibility.values()):
             group["comments"].append(
                 {
