@@ -8,6 +8,11 @@ from interview_readiness import count_user_turns, evaluate_notes_readiness
 
 DEBUG_QUESTION_FLOW = os.getenv("DEBUG_QUESTION_FLOW", "").strip().lower() in {"1", "true", "yes", "on"}
 OPENAI_MODEL_NAME = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+POST_INTERVIEW_SURVEY_URL = os.getenv("POST_INTERVIEW_SURVEY_URL", "").strip()
+POST_INTERVIEW_SURVEY_TEXT = os.getenv(
+    "POST_INTERVIEW_SURVEY_TEXT",
+    "One last step: please evaluate your interview experience in this short follow-up survey.",
+).strip()
 STOP_ADDENDUM_WINDOW_SECONDS = 300
 STOP_REMINDER_DELAY_SECONDS = 150
 MAX_INTERVIEW_USER_TURNS = 14
@@ -55,6 +60,8 @@ CHECKPOINT_STATE_KEYS = [
     "active_draft_id",
     "thread_id",
     "owner_fingerprint",
+    "welcome_sent",
+    "chat_start_handled",
 ]
 
 WELCOME_TEXT = """# Welcome!
@@ -133,6 +140,8 @@ def init_session_state() -> None:
     cl.user_session.set("use_case_feedback_entries", [])
     cl.user_session.set("current_use_case_feedback", None)
     cl.user_session.set("current_use_case_feasibility_scope", None)
+    cl.user_session.set("welcome_sent", False)
+    cl.user_session.set("chat_start_handled", False)
 
 
 def compute_interview_progress() -> float:
@@ -146,20 +155,20 @@ def compute_interview_progress() -> float:
             index = ordered_steps.index(str(collection_step))
         except ValueError:
             index = 0
-        return min(0.22, 0.04 + (index / max(1, len(ordered_steps) - 1)) * 0.18)
+        return min(0.12, 0.02 + (index / max(1, len(ordered_steps) - 1)) * 0.10)
 
     if (
         cl.user_session.get("awaiting_company_confirmation")
         or cl.user_session.get("awaiting_company_description")
         or cl.user_session.get("awaiting_company_description_confirmation")
     ):
-        return 0.24
+        return 0.14
 
     if cl.user_session.get("awaiting_final_confirmation"):
-        return 0.8
+        return 0.76
 
     if cl.user_session.get("awaiting_use_case_feedback_consent"):
-        return 0.84
+        return 0.8
 
     pending_report_payload = cl.user_session.get("pending_report_payload") or {}
     use_cases = pending_report_payload.get("use_cases") or []
@@ -171,7 +180,7 @@ def compute_interview_progress() -> float:
     ):
         index = int(cl.user_session.get("use_case_feedback_index", 0) or 0)
         total = max(1, len(use_cases))
-        base = 0.84 + (min(index, total) / total) * 0.14
+        base = 0.8 + (min(index, total) / total) * 0.16
         if cl.user_session.get("awaiting_use_case_opinion"):
             step_fraction = 0.02
         elif cl.user_session.get("awaiting_use_case_scope_resolution"):
@@ -212,5 +221,5 @@ def compute_interview_progress() -> float:
     readiness_ratio = sum(ratios) / len(ratios)
     streak_ratio = min(1.0, float(cl.user_session.get("deterministic_ready_streak", 0) or 0) / max(1, READY_STREAK_REQUIRED))
     turn_ratio = min(1.0, float(count_user_turns(cl.user_session.get("messages") or [])) / max(1, MAX_INTERVIEW_USER_TURNS))
-    blended = max(readiness_ratio * 0.82 + streak_ratio * 0.1 + turn_ratio * 0.08, turn_ratio * 0.6)
-    return min(0.78, 0.22 + blended * 0.56)
+    blended = max(readiness_ratio * 0.86 + streak_ratio * 0.08 + turn_ratio * 0.06, turn_ratio * 0.45)
+    return min(0.74, 0.14 + blended * 0.60)

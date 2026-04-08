@@ -9,6 +9,7 @@ from conversation_utils import build_analysis_transcript
 from db import delete_interview_checkpoint, save_session, update_company_insights
 from report_agent import generate_report
 from report_formatting import generate_markdown_report
+from session_state import POST_INTERVIEW_SURVEY_TEXT, POST_INTERVIEW_SURVEY_URL
 from storage import persist_report_files
 
 
@@ -316,7 +317,11 @@ async def close_interview(send_assistant_message, messages: list, transcript: st
             report_json=report_json,
             report_md=md_content,
         )
-        north_star = report.north_star_alignment if report.north_star_alignment and interview_count == 0 else None
+        north_star = (
+            report.north_star_alignment
+            if report.north_star_alignment and report.north_star_source == "senior_stakeholder_interview"
+            else None
+        )
         update_company_insights(
             company=metadata["company"],
             north_star=north_star,
@@ -347,6 +352,16 @@ async def close_interview(send_assistant_message, messages: list, transcript: st
                 elements=download_elements,
             )
             await download_msg.send()
+
+        if POST_INTERVIEW_SURVEY_URL:
+            survey_msg = cl.Message(
+                content=(
+                    f"{POST_INTERVIEW_SURVEY_TEXT}\n\n"
+                    f"[Open the experience survey]({POST_INTERVIEW_SURVEY_URL})"
+                ),
+                author="Interviewer",
+            )
+            await survey_msg.send()
     except Exception:
         traceback.print_exc()
         return

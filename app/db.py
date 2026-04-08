@@ -77,6 +77,31 @@ def _normalize_use_case_feedback_key(name: str) -> str:
     return " ".join(str(name or "").strip().lower().split())
 
 
+def _merge_north_star(existing: Optional[str], new_value: Optional[str]) -> str:
+    existing_text = str(existing or "").strip()
+    new_text = str(new_value or "").strip()
+
+    if not existing_text:
+        return new_text
+    if not new_text:
+        return existing_text
+
+    existing_norm = " ".join(existing_text.lower().split())
+    new_norm = " ".join(new_text.lower().split())
+    if existing_norm == new_norm:
+        return existing_text
+    if new_norm in existing_norm:
+        return existing_text
+    if existing_norm in new_norm:
+        return new_text
+
+    return (
+        "North Star perspectives collected from senior stakeholders:\n"
+        f"- {existing_text}\n"
+        f"- {new_text}"
+    )
+
+
 def _merge_validated_use_case_feedback(existing_items: Optional[List], new_items: Optional[List]) -> List[Dict]:
     merged: Dict[str, Dict] = {}
 
@@ -325,7 +350,7 @@ def update_company_insights(
 
             new_doc = {
                 "company": company,
-                "north_star": north_star if north_star is not None else existing.get("north_star", ""),
+                "north_star": _merge_north_star(existing.get("north_star", ""), north_star),
                 "total_interviews": int(existing.get("total_interviews", 0)) + 1,
                 "departments": existing.get("departments", []),
                 "all_tasks": merged_tasks,
@@ -348,9 +373,10 @@ def update_company_insights(
         updates = []
         params = []
 
-        if north_star:
+        merged_north_star = _merge_north_star(existing[2] if existing else "", north_star)
+        if merged_north_star and merged_north_star != (existing[2] if existing else ""):
             updates.append("north_star = ?")
-            params.append(north_star)
+            params.append(merged_north_star)
 
         if tasks:
             existing_tasks = json.loads(existing[5]) if existing[5] else []
@@ -383,7 +409,7 @@ def update_company_insights(
                      VALUES (?,?,1,?,?,?)""",
             (
                 company,
-                north_star or "",
+                _merge_north_star("", north_star),
                 json.dumps(tasks) if tasks else "[]",
                 json.dumps(use_cases) if use_cases else "[]",
                 json.dumps(validated_use_cases) if validated_use_cases else "[]",

@@ -148,6 +148,10 @@ async def start():
     """Initialize chat session with company memory"""
     debug_log("session_start", openai_model=OPENAI_MODEL_NAME)
 
+    if cl.user_session.get("chat_start_handled", False):
+        return
+    cl.user_session.set("chat_start_handled", True)
+
     # If this thread already has a checkpoint, restore instead of resetting.
     owner = ensure_owner_fingerprint()
     draft_id = active_draft_id()
@@ -166,8 +170,10 @@ async def start():
 
     # Initialize session state
     init_session_state()
+    cl.user_session.set("chat_start_handled", True)
     
     # Send welcome message
+    cl.user_session.set("welcome_sent", True)
     await send_welcome_prompt()
     cl.user_session.set("messages", [{"role": "assistant", "content": WELCOME_TEXT}])
     save_checkpoint()
