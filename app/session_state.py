@@ -9,10 +9,9 @@ from interview_readiness import count_user_turns, evaluate_notes_readiness
 DEBUG_QUESTION_FLOW = os.getenv("DEBUG_QUESTION_FLOW", "").strip().lower() in {"1", "true", "yes", "on"}
 OPENAI_MODEL_NAME = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 POST_INTERVIEW_SURVEY_URL = os.getenv("POST_INTERVIEW_SURVEY_URL", "").strip()
-POST_INTERVIEW_SURVEY_TEXT = os.getenv(
-    "POST_INTERVIEW_SURVEY_TEXT",
-    "One last step: please evaluate your interview experience in this short follow-up survey.",
-).strip()
+POST_INTERVIEW_SURVEY_TEXT = (
+    "One last step: please evaluate your interview experience in this short follow-up survey."
+)
 STOP_ADDENDUM_WINDOW_SECONDS = 300
 STOP_REMINDER_DELAY_SECONDS = 150
 MAX_INTERVIEW_USER_TURNS = 14

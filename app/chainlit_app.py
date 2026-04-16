@@ -281,74 +281,66 @@ async def main(message: cl.Message):
     normalized_step = normalize_framework_step(framework_step)
     context = "your work" if not normalized_step else normalized_step.replace("_", " ")
     messages = cl.user_session.get("messages") or []
-    message_intent = classify_message_intent(user_input, context, messages)
-    intent = str(message_intent.get("intent", "answer")).strip().lower()
+    if not cl.user_session.get("awaiting_term_details", False):
+        message_intent = classify_message_intent(user_input, context, messages)
+        intent = str(message_intent.get("intent", "answer")).strip().lower()
 
-    if intent == "clarification":
-        meta_response = generate_meta_response(user_input, context, messages)
-        if meta_response:
-            messages.append({"role": "user", "content": user_input})
-            messages.append({"role": "assistant", "content": meta_response})
-            cl.user_session.set("messages", messages)
-            await send_assistant_message(meta_response)
-            save_checkpoint(message)
-            return
+        if intent == "clarification":
+            meta_response = generate_meta_response(user_input, context, messages)
+            if meta_response:
+                messages.append({"role": "user", "content": user_input})
+                messages.append({"role": "assistant", "content": meta_response})
+                cl.user_session.set("messages", messages)
+                await send_assistant_message(meta_response)
+                save_checkpoint(message)
+                return
 
-    should_skip, alternative_question = (intent == "uncertain"), None
+        should_skip, alternative_question = (intent == "uncertain"), None
 
-    if should_skip:
-        recent_messages = cl.user_session.get("messages") or []
-        alternative_question = generate_uncertainty_recovery(
-            user_input,
-            normalized_step,
-            recent_messages,
-        )
-        if alternative_question:
-            stripped = alternative_question.lstrip()
-            normalized = stripped.lower().replace("’", "'")
-            acknowledgement_starts = (
-                "that's okay",
-                "thats okay",
-                "it's okay",
-                "its okay",
-                "it's totally okay",
-                "its totally okay",
-                "it is okay",
-                "it is totally okay",
-                "no problem",
-                "no worries",
-                "that is okay",
-                "that is totally okay",
+        if should_skip:
+            recent_messages = cl.user_session.get("messages") or []
+            alternative_question = generate_uncertainty_recovery(
+                user_input,
+                normalized_step,
+                recent_messages,
             )
-            if not normalized.startswith(acknowledgement_starts):
-                alternative_question = (
-                    "That's okay, we can move on to the next question.\n\n"
-                    f"{alternative_question}"
+            if alternative_question:
+                stripped = alternative_question.lstrip()
+                normalized = stripped.lower().replace("’", "'")
+                acknowledgement_starts = (
+                    "that's okay",
+                    "thats okay",
+                    "it's okay",
+                    "its okay",
+                    "it's totally okay",
+                    "its totally okay",
+                    "it is okay",
+                    "it is totally okay",
+                    "no problem",
+                    "no worries",
+                    "that is okay",
+                    "that is totally okay",
                 )
+                if not normalized.startswith(acknowledgement_starts):
+                    alternative_question = (
+                        "That's okay, we can move on to the next question.\n\n"
+                        f"{alternative_question}"
+                    )
 
-    if should_skip and alternative_question:
-        messages = cl.user_session.get("messages")
-        messages.append({"role": "user", "content": user_input})
-        messages.append({"role": "assistant", "content": alternative_question})
-        cl.user_session.set("messages", messages)
-        
-        # Update framework step if skipping North Star
-        if normalized_step == "north_star":
-            cl.user_session.set("framework_step", "step_2_tasks")
-        
-        await send_assistant_message(alternative_question)
-        save_checkpoint(message)
-        return
-    
-    # Input validation (only for non-meta questions)
-    if (not stop_addendum_mode) and (not cl.user_session.get("awaiting_term_details", False)) and is_answer_too_short(user_input):
-        completeness = classify_answer_completeness(user_input, context, messages)
-        if completeness.get("intent") == "too_short":
-            await send_assistant_message("Could you provide a bit more detail? (Or type 'skip' to move on)")
+        if should_skip and alternative_question:
+            messages = cl.user_session.get("messages")
+            messages.append({"role": "user", "content": user_input})
+            messages.append({"role": "assistant", "content": alternative_question})
+            cl.user_session.set("messages", messages)
+            
+            # Update framework step if skipping North Star
+            if normalized_step == "north_star":
+                cl.user_session.set("framework_step", "step_2_tasks")
+            
+            await send_assistant_message(alternative_question)
             save_checkpoint(message)
             return
     
-    # Add user message
     messages = cl.user_session.get("messages")
     if stop_addendum_mode and messages and messages[-1].get("role") == "user":
         messages[-1]["content"] = f"""{messages[-1].get("content", "").rstrip()}
@@ -431,6 +423,14 @@ Additional details:
             save_checkpoint(message)
             return
     
+    # Input validation (only for non-meta questions)
+    if (not stop_addendum_mode) and (not cl.user_session.get("awaiting_term_details", False)) and is_answer_too_short(user_input):
+        completeness = classify_answer_completeness(user_input, context, messages)
+        if completeness.get("intent") == "too_short":
+            await send_assistant_message("Could you provide a bit more detail? (Or type 'skip' to move on)")
+            save_checkpoint(message)
+            return
+
     try:
         response = plan_interview_response(messages)
             
