@@ -45,13 +45,7 @@ def evaluate_notes_readiness(notes: dict, seniority_level: str) -> dict:
     )
     has_role_department = bool(notes.get("role")) and bool(notes.get("department"))
 
-    thresholds = {
-        "executive": {"tasks": 2, "friction_points": 1, "goals_kpis": 2, "factors": 1, "systems_data": 1},
-        "senior": {"tasks": 3, "friction_points": 2, "goals_kpis": 2, "factors": 1, "systems_data": 1},
-        "intermediate": {"tasks": 5, "friction_points": 3, "goals_kpis": 2, "factors": 1, "systems_data": 1},
-        "junior": {"tasks": 4, "friction_points": 2, "goals_kpis": 1, "factors": 1, "systems_data": 1},
-        "intern": {"tasks": 4, "friction_points": 2, "goals_kpis": 1, "factors": 1, "systems_data": 1},
-    }.get(seniority_level, {"tasks": 4, "friction_points": 2, "goals_kpis": 1, "factors": 1, "systems_data": 1})
+    thresholds = {"tasks": 3, "friction_points": 2, "goals_kpis": 2, "factors": 1, "systems_data": 1}
 
     strict_ready = (
         has_role_department and
