@@ -102,6 +102,65 @@ def _merge_north_star(existing: Optional[str], new_value: Optional[str]) -> str:
     )
 
 
+def _merge_recurring_themes(existing_items: Optional[List], new_items: Optional[List]) -> List[Dict]:
+    merged: Dict[str, Dict] = {}
+
+    def _apply(item: Dict) -> None:
+        if not isinstance(item, dict):
+            return
+        theme_key = " ".join(str(item.get("theme_key", "")).strip().lower().split())
+        label = str(item.get("label", "")).strip()
+        if not theme_key or not label:
+            return
+        category = str(item.get("category", "friction") or "friction").strip().lower()
+        evidence = str(item.get("evidence", "") or "").strip()
+        entry = merged.setdefault(
+            theme_key,
+            {
+                "theme_key": theme_key,
+                "label": label,
+                "category": category,
+                "mention_count": 0,
+                "contradiction_count": 0,
+                "examples": [],
+                "contradiction_examples": [],
+                "last_updated": None,
+            },
+        )
+        entry["mention_count"] += int(item.get("mention_count", item.get("count", 1)) or 1)
+        entry["contradiction_count"] += int(item.get("contradiction_count", 0) or 0)
+        if evidence and evidence not in entry["examples"]:
+            entry["examples"].append(evidence)
+        for extra in item.get("examples", []) if isinstance(item.get("examples"), list) else []:
+            extra_text = str(extra or "").strip()
+            if extra_text and extra_text not in entry["examples"]:
+                entry["examples"].append(extra_text)
+        entry["examples"] = entry["examples"][:3]
+        contradiction_evidence = str(item.get("contradiction_evidence", "") or "").strip()
+        if contradiction_evidence and contradiction_evidence not in entry["contradiction_examples"]:
+            entry["contradiction_examples"].append(contradiction_evidence)
+        for extra in item.get("contradiction_examples", []) if isinstance(item.get("contradiction_examples"), list) else []:
+            extra_text = str(extra or "").strip()
+            if extra_text and extra_text not in entry["contradiction_examples"]:
+                entry["contradiction_examples"].append(extra_text)
+        entry["contradiction_examples"] = entry["contradiction_examples"][:3]
+        entry["last_updated"] = item.get("last_updated") or entry.get("last_updated")
+
+    for item in existing_items or []:
+        _apply(item)
+    for item in new_items or []:
+        _apply(item)
+
+    return sorted(
+        merged.values(),
+        key=lambda x: (
+            -(int(x.get("mention_count", 0) or 0) - int(x.get("contradiction_count", 0) or 0)),
+            -int(x.get("mention_count", 0) or 0),
+            str(x.get("label", "")),
+        ),
+    )
+
+
 def _merge_validated_use_case_feedback(existing_items: Optional[List], new_items: Optional[List]) -> List[Dict]:
     merged: Dict[str, Dict] = {}
 
@@ -254,8 +313,10 @@ def init_db():
                   all_tasks TEXT,
                   all_use_cases TEXT,
                   validated_use_cases TEXT,
+                  recurring_themes TEXT,
                   last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP)"""
     )
+    _sqlite_ensure_column(conn, "company_insights", "recurring_themes", "TEXT")
 
     c.execute(
         """CREATE TABLE IF NOT EXISTS interview_drafts
@@ -332,6 +393,7 @@ def update_company_insights(
     tasks: Optional[List] = None,
     use_cases: Optional[List] = None,
     validated_use_cases: Optional[List] = None,
+    recurring_themes: Optional[List] = None,
 ):
     if _is_mongo_enabled():
         client, _, insights_col = _mongo_collections()
@@ -340,6 +402,7 @@ def update_company_insights(
             merged_tasks = list(existing.get("all_tasks", []))
             merged_use_cases = list(existing.get("all_use_cases", []))
             merged_validated = list(existing.get("validated_use_cases", []))
+            merged_themes = list(existing.get("recurring_themes", []))
 
             if tasks:
                 merged_tasks.extend(tasks)
@@ -347,6 +410,8 @@ def update_company_insights(
                 merged_use_cases.extend(use_cases)
             if validated_use_cases:
                 merged_validated = _merge_validated_use_case_feedback(merged_validated, validated_use_cases)
+            if recurring_themes:
+                merged_themes = _merge_recurring_themes(merged_themes, recurring_themes)
 
             new_doc = {
                 "company": company,
@@ -356,6 +421,7 @@ def update_company_insights(
                 "all_tasks": merged_tasks,
                 "all_use_cases": merged_use_cases,
                 "validated_use_cases": merged_validated,
+                "recurring_themes": merged_themes,
                 "last_updated": datetime.utcnow().isoformat(),
             }
             insights_col.replace_one({"company": company}, new_doc, upsert=True)
@@ -394,6 +460,10 @@ def update_company_insights(
             existing_validated = json.loads(existing[7]) if existing[7] else []
             updates.append("validated_use_cases = ?")
             params.append(json.dumps(_merge_validated_use_case_feedback(existing_validated, validated_use_cases)))
+        if recurring_themes:
+            existing_themes = json.loads(existing[8]) if existing[8] else []
+            updates.append("recurring_themes = ?")
+            params.append(json.dumps(_merge_recurring_themes(existing_themes, recurring_themes)))
 
         updates.append("total_interviews = total_interviews + 1")
         updates.append("last_updated = ?")
@@ -405,14 +475,15 @@ def update_company_insights(
     else:
         c.execute(
             """INSERT INTO company_insights 
-                     (company, north_star, total_interviews, all_tasks, all_use_cases, validated_use_cases)
-                     VALUES (?,?,1,?,?,?)""",
+                     (company, north_star, total_interviews, all_tasks, all_use_cases, validated_use_cases, recurring_themes)
+                     VALUES (?,?,1,?,?,?,?)""",
             (
                 company,
                 _merge_north_star("", north_star),
                 json.dumps(tasks) if tasks else "[]",
                 json.dumps(use_cases) if use_cases else "[]",
                 json.dumps(validated_use_cases) if validated_use_cases else "[]",
+                json.dumps(_merge_recurring_themes([], recurring_themes)) if recurring_themes else "[]",
             ),
         )
 
@@ -435,6 +506,7 @@ def get_company_insights(company: str) -> Optional[Dict]:
                 "all_tasks": doc.get("all_tasks", []),
                 "all_use_cases": doc.get("all_use_cases", []),
                 "validated_use_cases": doc.get("validated_use_cases", []),
+                "recurring_themes": doc.get("recurring_themes", []),
                 "last_updated": doc.get("last_updated"),
             }
         finally:
@@ -457,7 +529,8 @@ def get_company_insights(company: str) -> Optional[Dict]:
         "all_tasks": json.loads(row[5]) if row[5] else [],
         "all_use_cases": json.loads(row[6]) if row[6] else [],
         "validated_use_cases": json.loads(row[7]) if row[7] else [],
-        "last_updated": row[8],
+        "recurring_themes": json.loads(row[8]) if row[8] else [],
+        "last_updated": row[9],
     }
 
 

@@ -5,6 +5,7 @@ import traceback
 
 import chainlit as cl
 
+from company_memory import assess_theme_alignment, extract_company_recurring_themes
 from conversation_utils import build_analysis_transcript
 from db import delete_interview_checkpoint, save_session, update_company_insights
 from report_agent import generate_report
@@ -322,12 +323,37 @@ async def close_interview(send_assistant_message, messages: list, transcript: st
             if report.north_star_alignment and report.north_star_source == "senior_stakeholder_interview"
             else None
         )
+        company_context = cl.user_session.get("company_context") or {}
+        recurring_themes = extract_company_recurring_themes(
+            analysis_transcript,
+            metadata,
+            cl.user_session.get("notes") or {},
+        )
+        theme_alignments = assess_theme_alignment(
+            analysis_transcript,
+            metadata,
+            cl.user_session.get("notes") or {},
+            company_context.get("recurring_themes", []),
+        )
+        contradiction_updates = []
+        for item in theme_alignments:
+            if str(item.get("stance", "")).strip().lower() != "contradict":
+                continue
+            contradiction_updates.append(
+                {
+                    "theme_key": item.get("theme_key"),
+                    "mention_count": 0,
+                    "contradiction_count": 1,
+                    "contradiction_evidence": item.get("evidence", ""),
+                }
+            )
         update_company_insights(
             company=metadata["company"],
             north_star=north_star,
             tasks=[t.model_dump() for t in report.tasks],
             use_cases=[uc.model_dump() for uc in report.use_cases],
             validated_use_cases=build_validated_use_case_entries(use_case_feedback or [], metadata),
+            recurring_themes=(recurring_themes or []) + contradiction_updates,
         )
 
         download_elements = [

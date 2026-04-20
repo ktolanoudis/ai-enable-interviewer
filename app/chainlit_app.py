@@ -4,6 +4,7 @@ import asyncio
 import time
 import traceback
 import uuid
+import re
 from dotenv import load_dotenv
 import chainlit as cl
 from fastapi import Request
@@ -17,6 +18,7 @@ from meta_question_handler import (classify_answer_completeness, classify_confir
                                    generate_uncertainty_recovery)
 from interview_readiness import (
     is_answer_too_short,
+    looks_like_finish_request,
 )
 from conversation_utils import (
     normalize_framework_step,
@@ -38,6 +40,8 @@ from company_flow import (
     send_welcome_prompt,
 )
 from interview_flow import (
+    _close_from_state,
+    begin_use_case_feedback,
     maybe_handle_closure_phase,
     maybe_handle_company_context_phase,
     _handle_use_case_rating_submission,
@@ -275,6 +279,36 @@ async def main(message: cl.Message):
         return
 
     if await maybe_handle_closure_phase(user_input, message, save_checkpoint, send_assistant_message):
+        return
+
+    metadata = cl.user_session.get("metadata") or {}
+    normalized_input = str(user_input or "").strip()
+    lowered_input = normalized_input.lower()
+    if "focus on" in lowered_input:
+        focus_match = re.search(r"(?:just\s+)?focus on\s+([^.!?\n]+)", lowered_input)
+        if focus_match:
+            metadata["interview_focus"] = focus_match.group(1).strip(" .")
+    excluded_matches = re.findall(r"(?:let'?s\s+not\s+focus on|do not focus on|don't focus on)\s+([^.!?\n]+)", lowered_input)
+    if excluded_matches:
+        existing_excluded = [
+            str(item).strip() for item in (metadata.get("out_of_scope_topics") or [])
+            if str(item).strip()
+        ]
+        for match in excluded_matches:
+            topic = match.strip(" .")
+            if topic and topic not in existing_excluded:
+                existing_excluded.append(topic)
+        metadata["out_of_scope_topics"] = existing_excluded
+    cl.user_session.set("metadata", metadata)
+
+    if looks_like_finish_request(user_input):
+        messages = cl.user_session.get("messages") or []
+        messages.append({"role": "user", "content": user_input})
+        cl.user_session.set("messages", messages)
+        feedback_prompt = await begin_use_case_feedback(send_assistant_message, messages, metadata)
+        if feedback_prompt is None:
+            await _close_from_state(send_assistant_message, messages)
+        save_checkpoint(message)
         return
 
     framework_step = cl.user_session.get("framework_step", "")

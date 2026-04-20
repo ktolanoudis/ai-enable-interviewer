@@ -1,3 +1,6 @@
+import re
+
+
 def is_answer_too_short(text: str) -> bool:
     """Check if user answer is too short/vague."""
     words = text.strip().split()
@@ -8,8 +11,46 @@ def _as_list(value):
     return value if isinstance(value, list) else []
 
 
+def _looks_like_interview_start(content: str) -> bool:
+    text = str(content or "").strip().lower()
+    return (
+        "**let's start:**" in text
+        or "**what are the main business goals or strategic priorities for your organization?**" in text
+    )
+
+
+def _find_interview_start_index(messages: list) -> int:
+    for idx, message in enumerate(messages or []):
+        if str(message.get("role", "")).strip().lower() != "assistant":
+            continue
+        if _looks_like_interview_start(message.get("content", "")):
+            return idx
+    return 0
+
+
 def count_user_turns(messages: list) -> int:
-    return sum(1 for m in messages if m.get("role") == "user")
+    start_index = _find_interview_start_index(messages)
+    return sum(
+        1
+        for idx, message in enumerate(messages or [])
+        if idx > start_index and message.get("role") == "user"
+    )
+
+
+def looks_like_finish_request(text: str) -> bool:
+    normalized = re.sub(r"\s+", " ", str(text or "").strip().lower())
+    patterns = [
+        r"\bfinish up\b",
+        r"\bfinish (the )?interview\b",
+        r"\bend (the )?interview\b",
+        r"\bwrap up\b",
+        r"\blet'?s stop here\b",
+        r"\bstop here\b",
+        r"\bmove to the final review\b",
+        r"\bgo to the final review\b",
+        r"\bclose the interview\b",
+    ]
+    return any(re.search(pattern, normalized) for pattern in patterns)
 
 
 def evaluate_notes_readiness(notes: dict, seniority_level: str) -> dict:
@@ -43,12 +84,9 @@ def evaluate_notes_readiness(notes: dict, seniority_level: str) -> dict:
         len(regulatory_concerns) +
         len(technical_constraints)
     )
-    has_role_department = bool(notes.get("role")) and bool(notes.get("department"))
-
     thresholds = {"tasks": 3, "friction_points": 2, "goals_kpis": 2, "factors": 1, "systems_data": 1}
 
     strict_ready = (
-        has_role_department and
         task_described_count >= thresholds["tasks"] and
         task_with_friction_count >= max(1, thresholds["tasks"] - 1) and
         friction_points_count >= thresholds["friction_points"] and
@@ -58,7 +96,6 @@ def evaluate_notes_readiness(notes: dict, seniority_level: str) -> dict:
     )
 
     turn_limit_ready = (
-        has_role_department and
         task_described_count >= 2 and
         friction_points_count >= 1 and
         goals_or_kpis_count >= 1 and

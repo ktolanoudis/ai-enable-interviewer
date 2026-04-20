@@ -111,6 +111,23 @@ ready_for_report = true ONLY if you have:
         if company_context.get('previous_use_cases'):
             context_addition += f"\nPrevious AI use cases proposed: {len(company_context['previous_use_cases'])} opportunities\n"
             context_addition += "Note if this person's work relates to or validates existing use cases.\n"
+
+        if company_context.get('recurring_themes'):
+            context_addition += "\nRecurring themes already seen across company interviews:\n"
+            for item in (company_context.get("recurring_themes") or [])[:8]:
+                if not isinstance(item, dict):
+                    continue
+                label = str(item.get("label", "")).strip()
+                count = int(item.get("mention_count", item.get("count", 0)) or 0)
+                contradiction_count = int(item.get("contradiction_count", 0) or 0)
+                examples = item.get("examples") or []
+                if not label:
+                    continue
+                context_addition += f"- {label} (mentioned in {count} interview{'s' if count != 1 else ''})\n"
+                if contradiction_count:
+                    context_addition += f"  Contradictions noted in {contradiction_count} interview{'s' if contradiction_count != 1 else ''}\n"
+                if examples:
+                    context_addition += f"  Example: {str(examples[0]).strip()}\n"
         
         if company_context.get('interview_count'):
             context_addition += f"\nThis is interview #{company_context['interview_count'] + 1} for this company.\n"
@@ -172,6 +189,25 @@ INTERVIEW COUNT FOR COMPANY: {interview_count}
             base_prompt += f"\n{len(company_context['previous_use_cases'])} AI use cases already proposed.\n"
             if seniority_level in ["executive", "senior", "intermediate"]:
                 base_prompt += "AFTER gathering their tasks, show them relevant use cases and ask for feedback/validation.\n"
+
+        if company_context.get('recurring_themes'):
+            base_prompt += f"\n{len(company_context['recurring_themes'])} recurring themes have already come up in prior interviews.\n"
+            base_prompt += "Use them as hypotheses to validate, not as facts to assume.\n"
+            for item in (company_context.get("recurring_themes") or [])[:8]:
+                if not isinstance(item, dict):
+                    continue
+                label = str(item.get("label", "")).strip()
+                count = int(item.get("mention_count", item.get("count", 0)) or 0)
+                contradiction_count = int(item.get("contradiction_count", 0) or 0)
+                examples = item.get("examples") or []
+                if not label:
+                    continue
+                base_prompt += f"- {label} (mentioned in {count} interview{'s' if count != 1 else ''})"
+                if contradiction_count:
+                    base_prompt += f", contradicted in {contradiction_count}"
+                if examples:
+                    base_prompt += f": {str(examples[0]).strip()}"
+                base_prompt += "\n"
         
         base_prompt += "\n--- END COMPANY CONTEXT ---\n\n"
     
@@ -240,6 +276,8 @@ Rules for each question:
 - No lists, no numbering, no colons, no multiple questions, no bulletpoints
 - Do NOT propose AI solutions yet - just gather information
 - Use the "missing" list to decide what to ask next
+- If a recurring company theme seems relevant, you may ask whether that issue affects this person's work too.
+- Ask recurring themes as validation questions, not as assumptions.
 - Be conversational and natural
 - Adjust complexity based on seniority level
 

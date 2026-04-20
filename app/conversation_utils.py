@@ -126,6 +126,11 @@ def build_analysis_transcript(messages: list, metadata: dict) -> str:
         f"seniority_level: {metadata.get('seniority_level', '')}",
         f"north_star_source_hint: {metadata.get('north_star_source_hint', 'not_specified')}",
     ]
+    if metadata.get("interview_focus"):
+        meta_lines.append(f"interview_focus: {metadata.get('interview_focus', '')}")
+    excluded_topics = metadata.get("out_of_scope_topics") or []
+    if excluded_topics:
+        meta_lines.append(f"out_of_scope_topics: {json.dumps(excluded_topics, ensure_ascii=True)}")
     term_contexts = metadata.get("term_contexts") or []
     if term_contexts:
         meta_lines.append("term_contexts:")

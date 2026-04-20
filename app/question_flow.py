@@ -1,6 +1,7 @@
 import chainlit as cl
 
 from conversation_utils import avoid_immediate_question_repeat, build_analysis_transcript, has_valid_north_star
+from company_memory import get_validated_recurring_themes
 from interview_agent import next_question, update_notes
 from interview_readiness import count_user_turns, evaluate_notes_readiness
 from role_classifier import classify_seniority, should_ask_north_star
@@ -14,6 +15,7 @@ def _build_company_context(company_insights: dict | None, interview_count: int):
         "north_star": company_insights.get("north_star") if has_valid_north_star(company_insights.get("north_star")) else None,
         "previous_tasks": company_insights.get("all_tasks", []),
         "previous_use_cases": company_insights.get("all_use_cases", []),
+        "recurring_themes": get_validated_recurring_themes(company_insights.get("recurring_themes", [])),
         "interview_count": interview_count,
     }
 
