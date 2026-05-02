@@ -129,6 +129,17 @@ def _apply_feasibility_rating(feasibility_feedback: dict, dimension: str, rating
         feasibility_feedback["regulatory_risk"] = str(rating)
 
 
+def _short_use_case_reaction(user_input: str) -> str:
+    text = str(user_input or "").strip().lower().replace("’", "'")
+    positive = {"yes", "hes", "yeah", "yep", "sure", "helpful", "useful", "good", "sounds good", "could help"}
+    negative = {"no", "nope", "not useful", "not helpful", "would not help", "wouldn't help"}
+    if text in positive:
+        return "Seems useful for my work."
+    if text in negative:
+        return "Does not seem useful for my work."
+    return ""
+
+
 def _text_resolves_outside_role(user_input: str) -> bool:
     text = str(user_input or "").strip().lower().replace("’", "'")
     text = re.sub(r"\s+", " ", text)
@@ -207,6 +218,54 @@ async def _skip_current_use_case_as_outside_role(
     )
 
 
+async def _skip_current_use_case_feedback(
+    send_assistant_message,
+    save_checkpoint,
+    message,
+    messages: list,
+    report_payload: dict,
+    use_cases: list,
+    index: int,
+):
+    if index >= len(use_cases):
+        await _close_from_state(
+            send_assistant_message,
+            messages,
+            report_payload=report_payload,
+            use_case_feedback=cl.user_session.get("use_case_feedback_entries") or [],
+        )
+        save_checkpoint(message)
+        return True
+
+    current_use_case = use_cases[index]
+    current_feedback = {
+        "use_case_name": current_use_case.get("use_case_name", "AI Use Case"),
+        "task_name": current_use_case.get("task_name", ""),
+        "ai_solution_type": current_use_case.get("ai_solution_type", ""),
+        "description": current_use_case.get("description", ""),
+        "rating": None,
+        "comment": "",
+        "feasibility_feedback": {},
+    }
+    cl.user_session.set("current_use_case_feedback", current_feedback)
+    cl.user_session.set("awaiting_use_case_opinion", False)
+    cl.user_session.set("awaiting_use_case_rating", False)
+    cl.user_session.set("awaiting_use_case_feasibility", False)
+    cl.user_session.set("current_use_case_feasibility_scope", None)
+
+    feedback_entries = cl.user_session.get("use_case_feedback_entries") or []
+    feedback_entries.append(current_feedback)
+    cl.user_session.set("use_case_feedback_entries", feedback_entries)
+    return await _advance_use_case_feedback_or_close(
+        send_assistant_message,
+        save_checkpoint,
+        message,
+        messages,
+        report_payload,
+        feedback_entries,
+    )
+
+
 async def _handle_use_case_rating_submission(
     user_input: str,
     message,
@@ -241,6 +300,17 @@ async def _handle_use_case_rating_submission(
         )
         save_checkpoint(message)
         return True
+
+    if parsed_rating == "skip":
+        return await _skip_current_use_case_feedback(
+            send_assistant_message,
+            save_checkpoint,
+            message,
+            messages,
+            report_payload,
+            use_cases,
+            index,
+        )
 
     use_case_context = ""
     if 0 <= index < len(use_cases):
@@ -607,46 +677,24 @@ async def maybe_handle_closure_phase(user_input: str, message, save_checkpoint, 
         extracted_opinion = str(opinion_interpretation.get("opinion_text", "") or "").strip()
         included_rating = opinion_interpretation.get("included_rating")
         skipped_opinion = str(user_input or "").strip().lower() == "skip"
+        short_reaction = _short_use_case_reaction(user_input)
+        if short_reaction:
+            intent = "opinion"
+            has_substantive_opinion = True
+            extracted_opinion = short_reaction
 
         if skipped_opinion:
             messages.append({"role": "user", "content": user_input})
             cl.user_session.set("messages", messages)
 
-            if index >= len(use_cases):
-                await _close_from_state(
-                    send_assistant_message,
-                    messages,
-                    report_payload=report_payload,
-                    use_case_feedback=cl.user_session.get("use_case_feedback_entries") or [],
-                )
-                save_checkpoint(message)
-                return True
-
-            current_use_case = use_cases[index]
-            current_feedback = {
-                "use_case_name": current_use_case.get("use_case_name", "AI Use Case"),
-                "task_name": current_use_case.get("task_name", ""),
-                "ai_solution_type": current_use_case.get("ai_solution_type", ""),
-                "description": current_use_case.get("description", ""),
-                "rating": None,
-                "comment": "",
-                "feasibility_feedback": {},
-            }
-            cl.user_session.set("current_use_case_feedback", current_feedback)
-            cl.user_session.set("awaiting_use_case_opinion", False)
-            cl.user_session.set("awaiting_use_case_rating", False)
-            cl.user_session.set("awaiting_use_case_feasibility", False)
-            cl.user_session.set("current_use_case_feasibility_scope", None)
-            feedback_entries = cl.user_session.get("use_case_feedback_entries") or []
-            feedback_entries.append(current_feedback)
-            cl.user_session.set("use_case_feedback_entries", feedback_entries)
-            return await _advance_use_case_feedback_or_close(
+            return await _skip_current_use_case_feedback(
                 send_assistant_message,
                 save_checkpoint,
                 message,
                 messages,
                 report_payload,
-                feedback_entries,
+                use_cases,
+                index,
             )
 
         if parsed_rating_at_opinion_step is not None and parsed_rating_at_opinion_step != "skip" and not has_substantive_opinion:
@@ -753,9 +801,7 @@ async def maybe_handle_closure_phase(user_input: str, message, save_checkpoint, 
         cl.user_session.set("awaiting_use_case_opinion", False)
 
         if included_rating == "skip":
-            current_feedback["rating"] = None
-            cl.user_session.set("current_use_case_feedback", current_feedback)
-            return await _begin_use_case_feasibility_or_advance(
+            return await _skip_current_use_case_feedback(
                 send_assistant_message,
                 save_checkpoint,
                 message,
@@ -763,7 +809,6 @@ async def maybe_handle_closure_phase(user_input: str, message, save_checkpoint, 
                 report_payload,
                 use_cases,
                 index,
-                current_feedback,
             )
 
         if included_rating is not None:

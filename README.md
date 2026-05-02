@@ -1,15 +1,15 @@
 # AI-Enable: AI Use Case Discovery Agent
 
-A conversational system for identifying, evaluating, and prioritizing AI opportunities inside organizations through structured employee interviews.
+A conversational app for discovering, validating, and prioritizing internal AI opportunities through structured employee interviews.
 
-The app covers Steps 2 to 5 of the framework used in the thesis work behind the project:
+The app is built around the AI use-case discovery framework used in the thesis work behind this project. It focuses on Steps 2 to 5:
 
-- Step 2: task identification and breakdown
-- Step 3: AI use case discovery
-- Step 4: KPI definition
-- Step 5: feasibility assessment
+- Step 2: identify day-to-day tasks and workflow details
+- Step 3: generate AI use case opportunities
+- Step 4: define useful KPIs
+- Step 5: assess feasibility, constraints, and implementation risk
 
-It conducts role-aware interviews, accumulates organizational context across interviews, produces structured reports, and collects employee feedback on proposed AI use cases at the end of the interview.
+It interviews employees, builds company-level memory across interviews, generates structured reports, and asks interviewees to review the proposed AI use cases before the interview is closed.
 
 ---
 
@@ -19,7 +19,7 @@ Requirements
 
 - Python 3.13+
 - OpenAI API key
-- MongoDB Atlas recommended for shared interview drafts and production use
+- MongoDB Atlas recommended for shared drafts and production use
 
 Clone the repository
 
@@ -47,7 +47,7 @@ Create the environment file
 cp .env.example .env
 ```
 
-Then set the required values in `.env`, especially:
+Set the required values in `.env`, especially:
 
 ```bash
 OPENAI_API_KEY=sk-...
@@ -56,7 +56,7 @@ MONGODB_URI=...
 MONGODB_DB_NAME=ai_enable_discovery
 ```
 
-Run the app locally without Docker
+Run locally without Docker
 
 ```bash
 chainlit run app/chainlit_app.py --host 0.0.0.0 --port 8000
@@ -80,25 +80,25 @@ The main Docker entrypoint for local and server use is:
 
 What it does:
 
-- builds the image from source
-- removes any previous `discovery-app` container
-- starts the app container on the configured port
-- uses `.env` for runtime configuration
+- builds the image from the current source
+- removes the previous `discovery-app` container
+- starts the app on the configured host port
+- loads runtime configuration from `.env`
 
-If `DB_BACKEND=mongodb` and `MONGODB_URI` is set, the container runs against MongoDB Atlas.
+If `DB_BACKEND=mongodb` and `MONGODB_URI` are set, the app uses MongoDB Atlas.
 
-If you switch to a local SQLite setup instead, the script mounts:
+If the app is configured for local SQLite instead, the script mounts:
 
 - `data/` to `/app/data`
 - `reports/` to `/app/reports`
 
-By default the app starts at:
+Default local URL:
 
 ```text
 http://localhost:8000
 ```
 
-You can override ports through `.env`:
+Ports can be overridden in `.env`:
 
 ```bash
 PORT=8000
@@ -109,89 +109,126 @@ HOST_PORT=8000
 
 # What The App Does
 
-The interview flow is designed to gather enough operational detail to generate useful AI opportunities without turning the conversation into a form.
+The app runs a structured chatbot interview without turning the experience into a form.
 
-Core behavior:
+The fixed setup flow collects:
 
-- collects employee metadata in a fixed order:
-  - name
-  - company
-  - company website
-  - work email
-  - department
-  - role
-- researches the company from its website and public sources, then asks the interviewee to confirm or correct that context
-- adapts questions based on seniority and previous company interviews
-- keeps draft progress in persistent storage so a browser refresh can restore the active interview
-- reuses company memory from prior interviews to avoid starting from zero each time
+- name
+- company
+- company website
+- work email
+- department
+- role
 
-The interview itself focuses on:
+The app then researches the company website and public context, summarizes what it found, and asks the interviewee to confirm or correct it.
+
+The main interview focuses on:
 
 - day-to-day tasks
 - friction points and bottlenecks
-- tools and systems in use
+- systems, tools, and data sources
 - business goals and KPIs
-- data, process, and implementation constraints
+- constraints around data quality, regulation, explainability, and implementation
+
+Questioning is primarily LLM-planned from the current transcript and extracted notes. Deterministic logic is used for readiness checks, close conditions, draft handling, skip handling, and recurring-theme validation, but normal follow-up questions are not chosen through a rigid task-by-task objective selector.
+
+---
+
+# Interview Drafts
+
+Drafts allow users to refresh or reconnect without losing an unfinished interview.
+
+Draft behavior:
+
+- in-progress interviews are checkpointed to persistent storage
+- drafts are scoped to the browser or authenticated user identity
+- refresh and reconnect restore the active unfinished interview
+- completed interviews delete their draft checkpoints
+- New Chat abandons the open unfinished draft for that client identity and starts clean
+
+This keeps normal resume behavior while preventing old drafts from reappearing after the user intentionally starts over.
+
+---
+
+# Company Memory
+
+Completed interviews update company-level memory.
+
+Company memory includes:
+
+- recurring tasks and workflow patterns
+- proposed AI use cases
+- employee feedback on generated use cases
+- recurring themes inferred from interview content
+- contradictions or validations of previously observed themes
+
+Recurring themes are inferred dynamically from completed interviews. Similar themes are merged within the same company, and later interviews only validate themes that appear relevant to the current interviewee’s role, department, tasks, or systems.
+
+MongoDB and SQLite updates are protected against common read-merge-write issues. MongoDB uses company insight locks, while SQLite uses transactional writes for company insight updates.
 
 ---
 
 # Use Case Review
 
-At the end of the interview, the app does not stop at generating use cases internally. It also asks the interviewee to review them.
+After the interview, the app generates AI use cases and asks the interviewee to review them.
 
-For each proposed use case, the app can collect:
+For each use case, the app can collect:
 
-- a practical opinion in free text
+- a short free-text reaction
 - a usefulness rating from `1` to `5`
-- scope feedback when the use case belongs to another team or manager
-- feasibility feedback when the interviewee is in a position to judge it
+- scope feedback if the use case belongs to another role or team
+- feasibility comments and ratings when relevant
 
-The end-of-interview feasibility review is use-case-specific. The app separately judges whether the interviewee can comment on:
+If the interviewee skips a use case, the app skips the whole use-case review item and moves on.
+
+Feasibility review is use-case-specific. Depending on the user’s role and the use case, the app may ask about:
 
 - data quality and availability
 - regulatory or compliance risk
-- explainability or auditability requirements
+- explainability or auditability
 
-Those feasibility questions are asked one dimension at a time, only when they are relevant to that particular use case and that particular interviewee.
+Those feasibility prompts collect a short comment first, then a rating or risk label.
 
 ---
 
-# Company Memory And Drafts
+# Survey Handoff
 
-The app keeps two kinds of persistent memory:
+The app can send the user to an external post-interview questionnaire after the report is generated.
 
-Interview drafts
+Configure the survey URL with:
 
-- used to restore an in-progress conversation after refresh or reconnect
-- stored in persistent backend storage
-- isolated per browser/client identity in the current setup
+```bash
+POST_INTERVIEW_SURVEY_URL=https://www.soscisurvey.de/your-project/
+```
 
-Company insights
+When a survey URL is configured, the app appends the internal contributor key as:
 
-- aggregated across completed interviews
-- include previously identified tasks and AI use cases
-- include employee validation feedback on proposed use cases
-- now also include aggregated feasibility feedback such as:
-  - average usefulness rating
-  - average data-quality readiness score
-  - average explainability score
-  - regulatory-risk distribution
-  - safe-to-pursue signals
+```text
+r=<contributor_key>
+```
+
+For SoSci Survey, this value appears in the exported `REF` field. It can be joined back to:
+
+```text
+sessions.contributor_key
+```
+
+This allows the external questionnaire response to be linked to the interview session without exposing the user’s raw email address.
 
 ---
 
 # Unknown Tools And Terms
 
-The app no longer assumes that the model already understands every tool or acronym the interviewee mentions.
+The app does not assume every tool, acronym, or product name is already understood.
 
-If the interviewee introduces a named tool, system, acronym, or internal term that looks important to the workflow, the app can:
+If an interviewee mentions an important named tool or term, the app can:
 
-- ask the interviewee to explain what it is
-- look for public context online when available
-- ask the interviewee to confirm whether that public context is actually the same thing they mean
-- store the clarified explanation and include it in later reasoning and report generation
+- look for public context online
+- ask the interviewee to confirm whether the public context is the right one
+- ask for a short explanation if the term appears internal or ambiguous
+- store the clarified meaning for the rest of the interview and report
 
-This is especially useful for internal tools that are not safe to assume from model pretraining alone.
+This is useful for internal systems, niche tools, abbreviations, and product names that should not be guessed from model pretraining alone.
 
 ---
 
@@ -201,7 +238,8 @@ Each completed interview produces:
 
 - a structured JSON report
 - a Markdown report
-- persisted company-level insight updates
+- a persisted session record
+- company-level insight updates
 
 Reports include:
 
@@ -211,23 +249,23 @@ Reports include:
 - KPI suggestions
 - feasibility assessment
 - value-feasibility prioritization
-- employee feedback on the proposed use cases
+- employee feedback on proposed use cases
 
 ---
 
 # Storage
 
-Database backends
+Database backends:
 
-- MongoDB Atlas for shared drafts and server deployments
+- MongoDB Atlas for production and shared deployments
 - SQLite for local-only fallback setups
 
-Report storage backends
+Report storage backends:
 
 - S3-compatible object storage
 - local filesystem fallback
 
-Current configuration is controlled from `.env`.
+Runtime configuration is controlled through `.env`.
 
 ---
 
@@ -236,25 +274,31 @@ Current configuration is controlled from `.env`.
 Important files and modules:
 
 - [app/chainlit_app.py](/root/discovery/app/chainlit_app.py)
-  Chainlit entrypoint and main runtime wiring
+  Chainlit entrypoint, runtime event handling, resume behavior, and message routing
 - [app/company_flow.py](/root/discovery/app/company_flow.py)
-  metadata collection and company confirmation flow
+  metadata collection and company-context confirmation flow
 - [app/question_flow.py](/root/discovery/app/question_flow.py)
-  notes updates, readiness checks, and next-question planning
+  notes updates, readiness checks, company-theme validation, and LLM question planning
+- [app/interview_agent.py](/root/discovery/app/interview_agent.py)
+  notes extraction and next-question planning prompts
 - [app/interview_flow.py](/root/discovery/app/interview_flow.py)
-  company-confirmation handling, closeout flow, and use-case review logic
+  closeout flow, final review handling, and use-case feedback state machine
 - [app/feedback_flow.py](/root/discovery/app/feedback_flow.py)
-  report finalization and use-case feedback persistence
+  report finalization, feedback aggregation, session persistence, and survey handoff
+- [app/company_memory.py](/root/discovery/app/company_memory.py)
+  recurring-theme extraction, relevance checks, and theme alignment
 - [app/term_discovery.py](/root/discovery/app/term_discovery.py)
-  clarification and public lookup for unknown tools and terms
+  public lookup and clarification for unknown tools and terms
 - [app/company_research.py](/root/discovery/app/company_research.py)
   company website and public web research
 - [app/db.py](/root/discovery/app/db.py)
-  MongoDB / SQLite persistence
+  MongoDB and SQLite persistence
+- [app/checkpoints.py](/root/discovery/app/checkpoints.py)
+  draft checkpoint save, restore, ownership, and fallback lookup
 - [public/branding.js](/root/discovery/public/branding.js)
-  favicon and browser branding
+  browser branding, progress bar behavior, New Chat handling, and survey link behavior
 - [public/custom.css](/root/discovery/public/custom.css)
-  UI styling and logo behavior
+  UI styling and responsive layout adjustments
 - [scripts/docker-run.sh](/root/discovery/scripts/docker-run.sh)
   build-and-run script used for Docker-based runs
 
@@ -262,13 +306,15 @@ Important files and modules:
 
 # Environment Notes
 
-The provided `.env.example` includes:
+The provided `.env.example` covers:
 
 - OpenAI model settings
-- optional SerpAPI support for better public lookup
 - MongoDB Atlas settings
-- S3-compatible report storage settings
-- local SQLite and local report fallbacks
+- SQLite fallback settings
+- S3-compatible report storage
+- local report storage fallback
+- optional SerpAPI support for public lookup
+- optional post-interview survey URL
 
 For server use, MongoDB Atlas and S3-compatible report storage are the intended default path.
 
