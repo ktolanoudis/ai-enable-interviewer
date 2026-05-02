@@ -17,11 +17,59 @@ def _fallback_parse(field: str, user_message: str) -> dict:
     return {"intent": "provide", "value": text}
 
 
+def _deterministic_parse(field: str, user_message: str) -> Optional[dict]:
+    text = str(user_message or "").strip()
+    normalized = re.sub(r"\s+", " ", text.lower()).strip()
+    if not normalized:
+        return {"intent": "invalid" if field == "email" else "skip", "value": ""}
+
+    anonymous_phrases = {
+        "anonymous",
+        "prefer not to say",
+        "i prefer not to say",
+        "i want to remain anonymous",
+        "rather not say",
+    }
+    skip_phrases = {"skip", "not now", "none", "n/a", "na", "no", "no thanks", "don't know", "i don't know"}
+    if normalized in anonymous_phrases:
+        return {"intent": "anonymous", "value": ""}
+    if normalized in skip_phrases:
+        return {"intent": "skip", "value": ""}
+
+    if field == "email":
+        email_match = re.search(r"[^@\s,;<>]+@[^@\s,;<>]+\.[^@\s,;<>]+", text)
+        if email_match:
+            return {"intent": "provide", "value": email_match.group(0).lower()}
+        if "@" in text:
+            return {"intent": "invalid", "value": text}
+        return None
+
+    if field == "company_website":
+        url_match = re.search(r"(https?://[^\s,;<>]+|(?:www\.)?[a-z0-9][a-z0-9.-]+\.[a-z]{2,}(?:/[^\s,;<>]*)?)", text, re.I)
+        if url_match:
+            return {"intent": "provide", "value": url_match.group(0)}
+        if normalized in {"no website", "no site", "unknown", "not sure"}:
+            return {"intent": "skip", "value": ""}
+        return None
+
+    if field == "name" and normalized.startswith("my name is "):
+        return {"intent": "provide", "value": text[11:].strip()}
+    if field == "company" and normalized.startswith("i work for "):
+        return {"intent": "provide", "value": text[11:].strip()}
+    if field in {"department", "role"} and len(text.split()) <= 8:
+        return {"intent": "provide", "value": text}
+    return None
+
+
 def parse_collection_response(
     field: str,
     user_message: str,
     history: Optional[list] = None,
 ) -> dict:
+    deterministic = _deterministic_parse(field, user_message)
+    if deterministic is not None:
+        return deterministic
+
     recent_history = [
         {"role": m.get("role"), "content": m.get("content", "")}
         for m in (history or [])[-6:]
@@ -65,6 +113,7 @@ Rules:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": json.dumps(payload)},
             ],
+            temperature=0,
             response_format={"type": "json_object"},
         )
         data = json.loads(resp.choices[0].message.content or "{}")

@@ -111,6 +111,18 @@ def normalize_framework_step(step: str) -> str:
     return mapping.get(step, step or "")
 
 
+def split_prompt_context(prompt: str) -> tuple[str, str]:
+    """Split optional lead-in context from the actual interview prompt."""
+    text = str(prompt or "").strip()
+    if not text:
+        return "", ""
+    divider = "\n\n---\n\n"
+    if divider in text:
+        lead, question = text.split(divider, 1)
+        return lead.strip(), question.strip()
+    return "", text
+
+
 def build_analysis_transcript(messages: list, metadata: dict) -> str:
     """
     Build transcript sent to LLMs.

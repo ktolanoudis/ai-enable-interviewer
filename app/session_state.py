@@ -1,6 +1,7 @@
 import datetime
 import json
 import os
+import uuid
 
 import chainlit as cl
 
@@ -10,7 +11,7 @@ DEBUG_QUESTION_FLOW = os.getenv("DEBUG_QUESTION_FLOW", "").strip().lower() in {"
 OPENAI_MODEL_NAME = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 POST_INTERVIEW_SURVEY_URL = os.getenv("POST_INTERVIEW_SURVEY_URL", "").strip()
 POST_INTERVIEW_SURVEY_TEXT = (
-    "One last step: please evaluate your interview experience in this short follow-up survey."
+    "Next, this short anonymous questionnaire will open in a new tab. It is the final required step in the workflow."
 )
 STOP_ADDENDUM_WINDOW_SECONDS = 300
 STOP_REMINDER_DELAY_SECONDS = 150
@@ -37,6 +38,8 @@ CHECKPOINT_STATE_KEYS = [
     "stop_reminder_sent",
     "deterministic_ready_streak",
     "awaiting_final_confirmation",
+    "awaiting_final_addendum",
+    "finalization_failed",
     "closed_notice_sent",
     "awaiting_company_confirmation",
     "awaiting_company_description",
@@ -56,6 +59,7 @@ CHECKPOINT_STATE_KEYS = [
     "use_case_feedback_entries",
     "current_use_case_feedback",
     "current_use_case_feasibility_scope",
+    "asked_theme_validation_keys",
     "active_draft_id",
     "thread_id",
     "owner_fingerprint",
@@ -105,7 +109,7 @@ def init_session_state() -> None:
     )
     cl.user_session.set("report_done", False)
     cl.user_session.set("framework_step", None)
-    cl.user_session.set("session_id", datetime.datetime.now().strftime("%Y%m%d_%H%M%S"))
+    cl.user_session.set("session_id", f"{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}")
     cl.user_session.set("active_draft_id", None)
     cl.user_session.set("thread_id", None)
     cl.user_session.set("seniority_level", None)
@@ -120,6 +124,8 @@ def init_session_state() -> None:
     cl.user_session.set("stop_reminder_sent", False)
     cl.user_session.set("deterministic_ready_streak", 0)
     cl.user_session.set("awaiting_final_confirmation", False)
+    cl.user_session.set("awaiting_final_addendum", False)
+    cl.user_session.set("finalization_failed", False)
     cl.user_session.set("closed_notice_sent", False)
     cl.user_session.set("awaiting_company_confirmation", False)
     cl.user_session.set("awaiting_company_description", False)
@@ -139,6 +145,7 @@ def init_session_state() -> None:
     cl.user_session.set("use_case_feedback_entries", [])
     cl.user_session.set("current_use_case_feedback", None)
     cl.user_session.set("current_use_case_feasibility_scope", None)
+    cl.user_session.set("asked_theme_validation_keys", [])
     cl.user_session.set("welcome_sent", False)
     cl.user_session.set("chat_start_handled", False)
 

@@ -1,20 +1,25 @@
+import asyncio
+
 import chainlit as cl
 
 from collection_intent import parse_collection_response
 from company_research import format_company_context, normalize_website_url, research_company
-from conversation_utils import get_interview_strategy_description, has_valid_north_star
+from conversation_utils import get_interview_strategy_description, has_valid_north_star, split_prompt_context
 from db import get_company_insights, get_company_interview_count
 from role_classifier import classify_seniority, should_ask_north_star
 from session_state import WELCOME_TEXT, compute_interview_progress
 
 
 async def send_assistant_message(content: str, actions=None) -> None:
-    progress = max(0.0, min(1.0, compute_interview_progress()))
-    hidden_progress = (
-        f'<div data-interview-progress="{progress:.4f}" '
-        f'style="display:none !important; visibility:hidden !important; height:0; overflow:hidden;"></div>'
-    )
-    await cl.Message(content=content + "\n\n" + hidden_progress, author="Interviewer", actions=actions or []).send()
+    try:
+        progress = max(0.0, min(1.0, float(compute_interview_progress())))
+        progress_marker = (
+            f'\n\n<span data-ai-enable-progress="{progress:.4f}" '
+            'style="display:none!important;visibility:hidden!important;height:0;overflow:hidden"></span>'
+        )
+    except Exception:
+        progress_marker = ""
+    await cl.Message(content=content + progress_marker, author="Interviewer", actions=actions or []).send()
 
 
 async def send_welcome_prompt() -> None:
@@ -100,11 +105,18 @@ async def start_interview_with_company_context(save_checkpoint, message: cl.Mess
         cl.user_session.set("framework_step", "step_2_tasks")
         prompt += "**Let's start:** What are your main day-to-day tasks?"
 
+    lead_in, interview_prompt = split_prompt_context(prompt)
     messages = cl.user_session.get("messages") or []
-    messages.append({"role": "assistant", "content": prompt})
+    if lead_in:
+        messages.append({"role": "assistant", "content": lead_in})
+    if interview_prompt:
+        messages.append({"role": "assistant", "content": interview_prompt})
     cl.user_session.set("messages", messages)
     cl.user_session.set("interview_started", True)
-    await send_assistant_message(prompt)
+    if lead_in:
+        await send_assistant_message(lead_in)
+    if interview_prompt:
+        await send_assistant_message(interview_prompt)
     save_checkpoint(message)
 
 
@@ -128,14 +140,15 @@ async def start_interview_without_company_context(save_checkpoint, message: cl.M
 
     name = metadata.get("employee_name", "there")
     greeting = f"Thanks, {name}!" if name != "Anonymous" else "Great!"
-    greeting += " We'll continue without company background for now.\n\n"
-    greeting += prompt
+    greeting += " We'll continue without company background for now."
 
     messages = cl.user_session.get("messages") or []
     messages.append({"role": "assistant", "content": greeting})
+    messages.append({"role": "assistant", "content": prompt})
     cl.user_session.set("messages", messages)
     cl.user_session.set("interview_started", True)
     await send_assistant_message(greeting)
+    await send_assistant_message(prompt)
     save_checkpoint(message)
 
 
@@ -159,8 +172,26 @@ async def run_company_setup(save_checkpoint, message: cl.Message = None) -> None
     cl.user_session.set("company_setup_token", setup_token)
     cl.user_session.set("company_setup_in_progress", True)
     try:
-        await send_assistant_message("Let me review your company website and check other online sources...")
-        company_info = research_company(company, company_website=metadata.get("company_website"), use_ai=True)
+        research_msg = "Let me review your company website and check other online sources..."
+        messages = cl.user_session.get("messages") or []
+        messages.append({"role": "assistant", "content": research_msg})
+        cl.user_session.set("messages", messages)
+        await send_assistant_message(research_msg)
+        save_checkpoint(message)
+        try:
+            company_info = await asyncio.to_thread(
+                research_company,
+                company,
+                company_website=metadata.get("company_website"),
+                use_ai=True,
+            )
+        except Exception:
+            company_info = {
+                "name": company,
+                "description": None,
+                "source": None,
+                "website_url": metadata.get("company_website"),
+            }
 
         if int(cl.user_session.get("company_setup_token") or 0) != setup_token:
             return
@@ -172,8 +203,12 @@ async def run_company_setup(save_checkpoint, message: cl.Message = None) -> None
         ):
             return
 
-        interview_count = get_company_interview_count(company)
         company_insights = get_company_insights(company)
+        interview_count = (
+            int(company_insights.get("total_interviews", 0) or 0)
+            if company_insights
+            else get_company_interview_count(company)
+        )
         cl.user_session.set("interview_count", interview_count)
         cl.user_session.set("company_context", company_insights)
 

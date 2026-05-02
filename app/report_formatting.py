@@ -18,12 +18,13 @@ def generate_markdown_report(report: Report, metadata: dict) -> str:
 
     md = "# AI Use Case Discovery Report\n\n"
     md += "## Metadata\n\n"
-    md += f"- **Employee:** {metadata['employee_name']}\n"
+    metadata = metadata or {}
+    md += f"- **Employee:** {metadata.get('employee_name', 'Anonymous')}\n"
     md += f"- **Email:** {metadata.get('email', 'N/A')}\n"
-    md += f"- **Department:** {metadata['department']}\n"
-    md += f"- **Position:** {metadata['role']}\n"
+    md += f"- **Department:** {metadata.get('department', '')}\n"
+    md += f"- **Position:** {metadata.get('role', '')}\n"
     md += f"- **Seniority:** {metadata.get('seniority_level', 'N/A')}\n"
-    md += f"- **Company:** {metadata['company']}\n"
+    md += f"- **Company:** {metadata.get('company') or 'Unknown company'}\n"
     md += f"- **Date:** {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n"
 
     md += "---\n\n"

@@ -1,9 +1,109 @@
 """Model-based message classification and response helpers for the interview flow."""
 
 import json
+import re
 from typing import Optional
 
 from ai_client import MODEL, get_client
+
+
+def _normalized_text(value: str) -> str:
+    return re.sub(r"\s+", " ", str(value or "").strip().lower())
+
+
+def _deterministic_confirmation_intent(user_message: str) -> Optional[str]:
+    text = _normalized_text(user_message).replace("’", "'")
+    if not text:
+        return None
+    correction_markers = (
+        "actually",
+        "correction",
+        "that's wrong",
+        "that is wrong",
+        "not exactly",
+        "not quite",
+        "needs correcting",
+    )
+    if any(marker in text for marker in correction_markers):
+        return "correction"
+    yes_values = {"yes", "y", "yeah", "yep", "correct", "right", "accurate", "looks good", "that's right", "that is right", "ok", "okay", "continue"}
+    no_values = {"no", "n", "nope", "skip", "stop", "finish", "not accurate", "incorrect", "decline"}
+    if text in yes_values:
+        return "yes"
+    if text in no_values:
+        return "no"
+    if re.fullmatch(r"(yes|yeah|yep|correct|right|accurate)[.! ]*", text):
+        return "yes"
+    if re.fullmatch(r"(no|nope|skip|stop|finish)[.! ]*", text):
+        return "no"
+    return None
+
+
+def _deterministic_message_intent(user_message: str) -> Optional[str]:
+    text = _normalized_text(user_message).replace("’", "'")
+    if not text:
+        return None
+    if text in {"skip", "pass", "not sure", "i don't know", "dont know", "no idea", "can't answer", "cannot answer", "move on"}:
+        return "uncertain"
+    if text in {"what do you mean", "what does that mean", "can you clarify", "clarify", "explain the question"}:
+        return "clarification"
+    if text.startswith(("what do you mean", "can you clarify", "could you clarify", "what exactly")):
+        return "clarification"
+    return None
+
+
+def _deterministic_use_case_feedback_intent(user_message: str) -> Optional[str]:
+    text = _normalized_text(user_message).replace("’", "'")
+    typo_tolerant_text = text.replace("ouside", "outside").replace("outisde", "outside")
+    if not text:
+        return None
+    if text in {"skip", "pass", "not sure", "i don't know", "dont know", "can't judge", "cannot judge"}:
+        return "uncertain"
+    if (
+        "outside" in typo_tolerant_text
+        or "outside my scope" in typo_tolerant_text
+        or "not my role" in typo_tolerant_text
+        or "another team" in typo_tolerant_text
+        or "someone else's" in typo_tolerant_text
+        or "belongs to my manager" in typo_tolerant_text
+    ):
+        return "scope_mismatch"
+    if "merge" in text or "overlap" in text or "duplicate" in text or "same as" in text:
+        return "structural_feedback"
+    if "what do you mean" in text or "how would" in text or "can you explain" in text:
+        return "clarification"
+    return None
+
+
+def _deterministic_scope_resolution(user_message: str) -> Optional[str]:
+    text = _normalized_text(user_message).replace("’", "'")
+    typo_tolerant_text = text.replace("ouside", "outside").replace("outisde", "outside")
+    if not text:
+        return None
+    outside_role_markers = (
+        "outside",
+        "outside my role",
+        "outside of my role",
+        "not in my role",
+        "not part of my role",
+        "not my role",
+        "not my responsibility",
+        "not my responsibilities",
+        "someone else",
+        "someone else's",
+        "another team",
+        "belongs to my manager",
+        "manager's workflow",
+        "manager workflow",
+        "skip it entirely",
+        "skip scoring",
+        "skip",
+    )
+    if any(marker in typo_tolerant_text for marker in outside_role_markers):
+        return "outside_role"
+    if "low value" in text or "not useful" in text or "within scope" in text or "my work" in text:
+        return "low_value"
+    return None
 
 def generate_meta_response(
     user_message: str,
@@ -64,6 +164,10 @@ def classify_message_intent(
     current_question_context: str = "",
     history: Optional[list] = None,
 ) -> dict:
+    deterministic = _deterministic_message_intent(user_message)
+    if deterministic:
+        return {"intent": deterministic}
+
     recent_history = [
         {"role": m.get("role"), "content": m.get("content", "")}
         for m in (history or [])[-8:]
@@ -97,6 +201,7 @@ Rules:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": json.dumps(payload)},
             ],
+            temperature=0,
             response_format={"type": "json_object"},
         )
         data = json.loads(resp.choices[0].message.content or "{}")
@@ -114,6 +219,10 @@ def classify_use_case_feedback_response(
     use_case_context: str = "",
     history: Optional[list] = None,
 ) -> dict:
+    deterministic = _deterministic_use_case_feedback_intent(user_message)
+    if deterministic:
+        return {"intent": deterministic}
+
     recent_history = [
         {"role": m.get("role"), "content": m.get("content", "")}
         for m in (history or [])[-8:]
@@ -151,6 +260,7 @@ Rules:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": json.dumps(payload)},
             ],
+            temperature=0,
             response_format={"type": "json_object"},
         )
         data = json.loads(resp.choices[0].message.content or "{}")
@@ -203,6 +313,7 @@ Rules:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": json.dumps(payload)},
             ],
+            temperature=0,
             response_format={"type": "json_object"},
         )
         data = json.loads(resp.choices[0].message.content or "{}")
@@ -267,6 +378,7 @@ Rules:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": json.dumps(payload)},
             ],
+            temperature=0,
             response_format={"type": "json_object"},
         )
         data = json.loads(resp.choices[0].message.content or "{}")
@@ -416,6 +528,10 @@ def classify_use_case_scope_resolution(
     use_case_context: str = "",
     history: Optional[list] = None,
 ) -> dict:
+    deterministic = _deterministic_scope_resolution(user_message)
+    if deterministic:
+        return {"intent": deterministic}
+
     recent_history = [
         {"role": m.get("role"), "content": m.get("content", "")}
         for m in (history or [])[-8:]
@@ -448,6 +564,7 @@ Rules:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": json.dumps(payload)},
             ],
+            temperature=0,
             response_format={"type": "json_object"},
         )
         data = json.loads(resp.choices[0].message.content or "{}")
@@ -465,6 +582,10 @@ def classify_confirmation_response(
     prompt_context: str = "",
     history: Optional[list] = None,
 ) -> dict:
+    deterministic = _deterministic_confirmation_intent(user_message)
+    if deterministic:
+        return {"intent": deterministic}
+
     recent_history = [
         {"role": m.get("role"), "content": m.get("content", "")}
         for m in (history or [])[-8:]
@@ -498,6 +619,7 @@ Rules:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": json.dumps(payload)},
             ],
+            temperature=0,
             response_format={"type": "json_object"},
         )
         data = json.loads(resp.choices[0].message.content or "{}")
@@ -515,6 +637,59 @@ def assess_use_case_feasibility_scope(
     metadata: Optional[dict] = None,
     history: Optional[list] = None,
 ) -> dict:
+    metadata = metadata or {}
+    role_context = " ".join(
+        [
+            str(metadata.get("role", "") or ""),
+            str(metadata.get("department", "") or ""),
+        ]
+    ).lower()
+
+    data_keywords = (
+        "data",
+        "analytics",
+        "analyst",
+        "engineering",
+        "engineer",
+        "developer",
+        "it",
+        "information technology",
+        "operations",
+        "systems",
+        "database",
+        "business intelligence",
+        "bi",
+    )
+    regulatory_keywords = (
+        "legal",
+        "compliance",
+        "privacy",
+        "risk",
+        "governance",
+        "audit",
+        "policy",
+        "security",
+    )
+    explainability_keywords = (
+        "data",
+        "analytics",
+        "risk",
+        "compliance",
+        "audit",
+        "governance",
+        "quality",
+        "operations",
+        "manager",
+        "lead",
+    )
+    deterministic_scope = {
+        "can_judge_data_quality": any(keyword in role_context for keyword in data_keywords),
+        "can_judge_regulatory_risk": any(keyword in role_context for keyword in regulatory_keywords),
+        "can_judge_explainability": any(keyword in role_context for keyword in explainability_keywords),
+    }
+    if any(deterministic_scope.values()) or role_context.strip():
+        return deterministic_scope
+
     recent_history = [
         {"role": m.get("role"), "content": m.get("content", "")}
         for m in (history or [])[-10:]
@@ -543,7 +718,7 @@ Rules:
 
     payload = {
         "use_case_context": use_case_context,
-        "metadata": metadata or {},
+        "metadata": metadata,
         "recent_history": recent_history,
     }
 
@@ -554,6 +729,7 @@ Rules:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": json.dumps(payload)},
             ],
+            temperature=0,
             response_format={"type": "json_object"},
         )
         data = json.loads(resp.choices[0].message.content or "{}")
@@ -588,16 +764,23 @@ Return JSON only.
 
 If dimension = "data_quality", return:
 - comment: string
+- data_quality_score: integer 1-5 or null
+- safe_to_pursue: "yes", "no", or "unclear"
 
 If dimension = "regulatory_risk", return:
 - comment: string
+- regulatory_risk: "low", "medium", "high", "critical", or "unknown"
+- safe_to_pursue: "yes", "no", or "unclear"
 
 If dimension = "explainability", return:
 - comment: string
+- explainability_score: integer 1-5 or null
+- safe_to_pursue: "yes", "no", or "unclear"
 
 Rules:
 - Capture only the employee's view in comment form.
-- Do not assign scores, levels, or your own judgment.
+- Extract explicit scores, risk labels, and safe-to-pursue signals when the user provides them.
+- Do not invent scores, levels, or your own judgment.
 - Preserve uncertainty if the user says they cannot judge that dimension.
 - Keep the meaning faithful to the user's answer.
 """
@@ -616,12 +799,47 @@ Rules:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": json.dumps(payload)},
             ],
+            temperature=0,
             response_format={"type": "json_object"},
         )
         data = json.loads(resp.choices[0].message.content or "{}")
-        return {"comment": str(data.get("comment", "")).strip()}
+        return _normalize_feasibility_extraction(dimension, user_message, data)
     except Exception:
-        return {"comment": str(user_message or "").strip()}
+        return _normalize_feasibility_extraction(dimension, user_message, {"comment": str(user_message or "").strip()})
+
+
+def _normalize_feasibility_extraction(dimension: str, user_message: str, data: dict) -> dict:
+    text = _normalized_text(user_message)
+    out = {"comment": str((data or {}).get("comment", "") or user_message or "").strip()}
+    score_match = re.search(r"\b([1-5])(?:\s*/\s*5)?\b", text)
+    safe_to_pursue = str((data or {}).get("safe_to_pursue", "") or "").strip().lower()
+    if safe_to_pursue not in {"yes", "no", "unclear"}:
+        if any(term in text for term in ("safe to pursue", "go ahead", "no issue", "should be fine", "low risk")):
+            safe_to_pursue = "yes"
+        elif any(term in text for term in ("not safe", "should not", "blocker", "too risky", "critical risk")):
+            safe_to_pursue = "no"
+        else:
+            safe_to_pursue = "unclear"
+    out["safe_to_pursue"] = safe_to_pursue
+
+    if dimension == "data_quality":
+        score = (data or {}).get("data_quality_score")
+        if not isinstance(score, int) and score_match:
+            score = int(score_match.group(1))
+        out["data_quality_score"] = score if isinstance(score, int) and 1 <= score <= 5 else None
+    elif dimension == "explainability":
+        score = (data or {}).get("explainability_score")
+        if not isinstance(score, int) and score_match:
+            score = int(score_match.group(1))
+        out["explainability_score"] = score if isinstance(score, int) and 1 <= score <= 5 else None
+    elif dimension == "regulatory_risk":
+        risk = str((data or {}).get("regulatory_risk", "") or "").strip().lower()
+        for candidate in ("critical", "high", "medium", "low"):
+            if candidate in text:
+                risk = candidate
+                break
+        out["regulatory_risk"] = risk if risk in {"low", "medium", "high", "critical"} else "unknown"
+    return out
 
 
 def classify_answer_completeness(
@@ -660,6 +878,7 @@ Rules:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": json.dumps(payload)},
             ],
+            temperature=0,
             response_format={"type": "json_object"},
         )
         data = json.loads(resp.choices[0].message.content or "{}")
@@ -688,9 +907,9 @@ The user could not answer the latest question. Respond naturally and briefly.
 
 Rules:
 - Start by acknowledging that it is okay not to know.
-- Do not repeat the exact same question.
-- Ask one easier adjacent question based on the most recent assistant question.
-- Keep the interview moving forward.
+- Treat "skip", "pass", "move on", "I don't know", and similar answers as a request to leave the current question/topic.
+- Do not ask another follow-up about the same task, topic, metric, or detail from the most recent assistant question.
+- Move to a different useful part of the user's workflow instead.
 - Keep it concise: 2-4 sentences.
 - The final sentence should contain exactly one concrete follow-up question.
 """

@@ -227,6 +227,7 @@ def generate_report(transcript: str) -> Report:
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": transcript},
             ],
+            temperature=0,
             response_format={"type": "json_object"},
         )
         data = _sanitize_report_data(json.loads(resp.choices[0].message.content))
@@ -239,6 +240,7 @@ def generate_report(transcript: str) -> Report:
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": transcript},
             ],
+            temperature=0,
         )
         data = _sanitize_report_data(_extract_json_loose(resp.choices[0].message.content))
         return Report(**data)

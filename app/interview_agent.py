@@ -172,6 +172,10 @@ INTERVIEW STRATEGY: {strategy}
 SENIORITY LEVEL: {seniority_level.upper()}
 INTERVIEW COUNT FOR COMPANY: {interview_count}
 """
+    if should_ask_north_star:
+        base_prompt += "NORTH STAR STATUS: still missing, so strategic goals may still need to be asked.\n"
+    else:
+        base_prompt += "NORTH STAR STATUS: do not ask about strategic priorities or North Star unless the user volunteers new information.\n"
     
     # Add company context awareness
     if interview_count > 0 and company_context:
@@ -276,6 +280,10 @@ Rules for each question:
 - No lists, no numbering, no colons, no multiple questions, no bulletpoints
 - Do NOT propose AI solutions yet - just gather information
 - Use the "missing" list to decide what to ask next
+- Use the full recent history, not only the missing checklist.
+- Do not over-drill into one task when the user has already answered or pushed back.
+- If the user says a task is not frustrating or they do not know a detail, move to another useful area.
+- Prefer high-value workflow information over low-value trivia such as exact counts, article counts, or before/during/after rituals.
 - If a recurring company theme seems relevant, you may ask whether that issue affects this person's work too.
 - Ask recurring themes as validation questions, not as assumptions.
 - Be conversational and natural
@@ -288,11 +296,28 @@ Generate 1-3 questions to systematically cover missing areas.
 
 
 def _extract_json_loose(text: str) -> dict:
-    start = text.find("{")
-    end = text.rfind("}")
+    raw = str(text or "").strip()
+    if raw.startswith("```"):
+        raw = raw.strip("`").strip()
+        if raw.lower().startswith("json"):
+            raw = raw[4:].strip()
+
+    decoder = json.JSONDecoder()
+    for index, char in enumerate(raw):
+        if char != "{":
+            continue
+        try:
+            parsed, _ = decoder.raw_decode(raw[index:])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+
+    start = raw.find("{")
+    end = raw.rfind("}")
     if start == -1 or end == -1 or end <= start:
         raise ValueError("No JSON object found.")
-    return json.loads(text[start:end+1])
+    return json.loads(raw[start:end+1])
 
 def update_notes(transcript: str, seniority_level: str = "intermediate", 
                  company_context: Optional[Dict] = None) -> Dict[str, Any]:
@@ -318,8 +343,10 @@ def update_notes(transcript: str, seniority_level: str = "intermediate",
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": transcript},
         ],
+        temperature=0,
+        response_format={"type": "json_object"},
     )
-    return json.loads(resp.choices[0].message.content)
+    return _extract_json_loose(resp.choices[0].message.content or "{}")
 
 def plan_questions(notes: Dict[str, Any], history: List[Dict[str, str]],
                    seniority_level: str = "intermediate", interview_count: int = 0,
@@ -363,6 +390,8 @@ def plan_questions(notes: Dict[str, Any], history: List[Dict[str, str]],
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": json.dumps(planner_input)},
         ],
+        temperature=0,
+        response_format={"type": "json_object"},
     )
 
     content = resp.choices[0].message.content
@@ -390,6 +419,7 @@ def plan_questions(notes: Dict[str, Any], history: List[Dict[str, str]],
                     break
 
     return normalized
+
 
 def next_question(history: List[Dict[str, str]], notes: Dict[str, Any],
                   seniority_level: str = "intermediate", interview_count: int = 0,

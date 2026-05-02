@@ -153,7 +153,7 @@ Do not make up information. Only use what you know from your training data."""
                 {"role": "system", "content": "You are a helpful assistant that provides factual company information."},
                 {"role": "user", "content": prompt}
             ],
-            temperature=1,
+            temperature=0,
             max_completion_tokens=200
         )
         

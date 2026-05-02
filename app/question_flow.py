@@ -1,11 +1,101 @@
 import chainlit as cl
 
 from conversation_utils import avoid_immediate_question_repeat, build_analysis_transcript, has_valid_north_star
-from company_memory import get_validated_recurring_themes
+from company_memory import assess_theme_alignment, assess_theme_relevance, get_validated_recurring_themes
 from interview_agent import next_question, update_notes
 from interview_readiness import count_user_turns, evaluate_notes_readiness
 from role_classifier import classify_seniority, should_ask_north_star
 from session_state import DEBUG_QUESTION_FLOW, MAX_INTERVIEW_USER_TURNS, READY_STREAK_REQUIRED, debug_log
+
+MAX_THEME_VALIDATIONS_PER_INTERVIEW = 2
+
+
+def _phrase_theme_validation_question(theme: dict) -> str:
+    label = str((theme or {}).get("label", "")).strip()
+    if label:
+        return f"Does {label.lower()} come up in your work? If so, how?"
+    return "Does this kind of issue come up in your work? If so, how?"
+
+def _theme_is_already_covered(theme: dict, notes: dict, messages: list, metadata: dict) -> bool:
+    alignments = assess_theme_alignment(
+        build_analysis_transcript(messages, metadata),
+        metadata,
+        notes,
+        [theme],
+    )
+    theme_key = str(theme.get("theme_key", "")).strip().lower()
+    for item in alignments:
+        if str(item.get("theme_key", "")).strip().lower() != theme_key:
+            continue
+        return str(item.get("stance", "")).strip().lower() == "confirm"
+    return False
+
+
+def _next_theme_validation_question(
+    company_context: dict | None,
+    notes: dict,
+    messages: list,
+    metadata: dict,
+    seniority_level: str,
+) -> tuple[str, str] | None:
+    if not company_context:
+        debug_log("theme_validation_skipped", reason="no_company_context")
+        return None
+    asked_theme_validation_keys = [
+        str(key).strip().lower()
+        for key in (cl.user_session.get("asked_theme_validation_keys") or [])
+        if str(key).strip()
+    ]
+    if len(asked_theme_validation_keys) >= MAX_THEME_VALIDATIONS_PER_INTERVIEW:
+        debug_log(
+            "theme_validation_skipped",
+            reason="validation_cap_reached",
+            asked_theme_validation_keys=asked_theme_validation_keys,
+        )
+        return None
+
+    candidate_themes = []
+    for theme in company_context.get("recurring_themes") or []:
+        if not isinstance(theme, dict):
+            continue
+        theme_key = str(theme.get("theme_key", "")).strip().lower()
+        if not theme_key:
+            continue
+        candidate_themes.append(theme)
+
+    if not candidate_themes:
+        debug_log("theme_validation_skipped", reason="no_candidate_themes")
+        return None
+
+    analysis_transcript = build_analysis_transcript(messages, metadata)
+    relevance_by_key = {
+        str(item.get("theme_key", "")).strip().lower(): str(item.get("relevance", "")).strip().lower()
+        for item in assess_theme_relevance(analysis_transcript, metadata, notes, candidate_themes)
+        if isinstance(item, dict)
+    }
+    alignment_by_key = {
+        str(item.get("theme_key", "")).strip().lower(): str(item.get("stance", "")).strip().lower()
+        for item in assess_theme_alignment(analysis_transcript, metadata, notes, candidate_themes)
+        if isinstance(item, dict)
+    }
+
+    for theme in candidate_themes:
+        theme_key = str(theme.get("theme_key", "")).strip().lower()
+        if theme_key in asked_theme_validation_keys:
+            debug_log("theme_validation_theme_skipped", theme_key=theme_key, reason="already_asked")
+            continue
+        relevance = relevance_by_key.get(theme_key, "unclear")
+        if relevance != "relevant":
+            debug_log("theme_validation_theme_skipped", theme_key=theme_key, reason=f"not_relevant:{relevance}")
+            continue
+        if alignment_by_key.get(theme_key) == "confirm":
+            debug_log("theme_validation_theme_skipped", theme_key=theme_key, reason="already_covered")
+            continue
+        question = _phrase_theme_validation_question(theme)
+        debug_log("theme_validation_theme_selected", theme_key=theme_key)
+        return theme_key, question
+    debug_log("theme_validation_skipped", reason="no_uncovered_themes")
+    return None
 
 
 def _build_company_context(company_insights: dict | None, interview_count: int):
@@ -74,6 +164,27 @@ def plan_interview_response(messages: list) -> str:
     )
 
     if close_candidate or turn_limit_candidate:
+        theme_validation = _next_theme_validation_question(
+            company_context,
+            notes,
+            messages,
+            metadata,
+            seniority_level,
+        )
+        if theme_validation:
+            theme_key, theme_question = theme_validation
+            asked_keys = list(cl.user_session.get("asked_theme_validation_keys") or [])
+            asked_keys.append(theme_key)
+            cl.user_session.set("asked_theme_validation_keys", asked_keys)
+            messages.append({"role": "assistant", "content": theme_question})
+            cl.user_session.set("messages", messages)
+            debug_log(
+                "theme_validation_question_selected",
+                theme_key=theme_key,
+                question=theme_question,
+            )
+            return theme_question
+
         final_prompt = (
             "I have enough information for the main interview. "
             "Before the final review step, do you want to add anything else?"

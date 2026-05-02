@@ -13,7 +13,11 @@ from chainlit.server import app as chainlit_server_app
 sys.path.append(os.path.dirname(__file__))
 load_dotenv(override=False)
 
-from db import init_db, get_interview_checkpoint
+from db import (
+    delete_open_interview_checkpoints_for_owner,
+    get_interview_checkpoint,
+    init_db,
+)
 from meta_question_handler import (classify_answer_completeness, classify_confirmation_response, classify_message_intent, generate_meta_response,
                                    generate_uncertainty_recovery)
 from interview_readiness import (
@@ -101,7 +105,8 @@ def _has_restore_suppression_cookie() -> bool:
                     cookie_header = headers.get("cookie") or headers.get("Cookie")
         if not cookie_header:
             return False
-        return "suppress_draft_restore=1" in str(cookie_header)
+        match = re.search(r"(?:^|;\s*)suppress_draft_restore=([^;]+)", str(cookie_header))
+        return bool(match and match.group(1).strip())
     except Exception:
         return False
 
@@ -118,6 +123,27 @@ def _company_setup_needs_resume() -> bool:
     ):
         return False
     return True
+
+
+def _reset_session_for_fresh_chat() -> None:
+    owner_fingerprint = cl.user_session.get("owner_fingerprint")
+    owner_identity_source = cl.user_session.get("owner_identity_source")
+    init_session_state()
+    cl.user_session.set("checkpoint_restored_this_connection", False)
+    if owner_fingerprint:
+        cl.user_session.set("owner_fingerprint", owner_fingerprint)
+    if owner_identity_source:
+        cl.user_session.set("owner_identity_source", owner_identity_source)
+
+
+def _abandon_open_drafts_for_fresh_chat() -> str:
+    owner = ensure_owner_fingerprint()
+    try:
+        deleted_count = delete_open_interview_checkpoints_for_owner(owner)
+        debug_log("open_drafts_abandoned_for_new_chat", owner=owner, deleted_count=deleted_count)
+    except Exception:
+        traceback.print_exc()
+    return owner
 
 
 async def _restore_checkpoint_if_available(draft_id: str = "", owner: str = "", allow_fallback: bool = False) -> bool:
@@ -157,9 +183,13 @@ async def start():
     cl.user_session.set("chat_start_handled", True)
 
     # If this thread already has a checkpoint, restore instead of resetting.
+    allow_fallback = not _has_restore_suppression_cookie()
+    if not allow_fallback:
+        debug_log("draft_restore_suppressed", handler="chat_start")
+        _abandon_open_drafts_for_fresh_chat()
+        _reset_session_for_fresh_chat()
     owner = ensure_owner_fingerprint()
     draft_id = active_draft_id()
-    allow_fallback = not _has_restore_suppression_cookie()
     if await _restore_checkpoint_if_available(draft_id=draft_id, owner=owner, allow_fallback=allow_fallback):
         return
 
@@ -196,6 +226,17 @@ async def resume(thread: dict):
         await send_assistant_message(
             "This interview session is already closed. Start a new chat to run another interview."
         )
+        return
+
+    if _has_restore_suppression_cookie():
+        debug_log("draft_restore_suppressed", handler="chat_resume")
+        _abandon_open_drafts_for_fresh_chat()
+        _reset_session_for_fresh_chat()
+        ensure_owner_fingerprint()
+        cl.user_session.set("chat_start_handled", True)
+        cl.user_session.set("welcome_sent", True)
+        await send_welcome_prompt()
+        cl.user_session.set("messages", [{"role": "assistant", "content": WELCOME_TEXT}])
         return
 
     owner = ensure_owner_fingerprint()
@@ -305,9 +346,17 @@ async def main(message: cl.Message):
         messages = cl.user_session.get("messages") or []
         messages.append({"role": "user", "content": user_input})
         cl.user_session.set("messages", messages)
-        feedback_prompt = await begin_use_case_feedback(send_assistant_message, messages, metadata)
-        if feedback_prompt is None:
-            await _close_from_state(send_assistant_message, messages)
+        if cl.user_session.get("finalization_failed"):
+            await _close_from_state(
+                send_assistant_message,
+                messages,
+                report_payload=cl.user_session.get("pending_report_payload"),
+                use_case_feedback=cl.user_session.get("use_case_feedback_entries") or [],
+            )
+        else:
+            feedback_prompt = await begin_use_case_feedback(send_assistant_message, messages, metadata)
+            if feedback_prompt is None:
+                await _close_from_state(send_assistant_message, messages)
         save_checkpoint(message)
         return
 
@@ -333,11 +382,18 @@ async def main(message: cl.Message):
 
         if should_skip:
             recent_messages = cl.user_session.get("messages") or []
-            alternative_question = generate_uncertainty_recovery(
-                user_input,
-                normalized_step,
-                recent_messages,
-            )
+            if str(user_input or "").strip().lower() in {"skip", "pass", "move on"}:
+                skip_messages = list(recent_messages)
+                skip_messages.append({"role": "user", "content": "Skip this question and move to a different topic."})
+                alternative_question = plan_interview_response(skip_messages)
+                if alternative_question:
+                    alternative_question = f"That's okay, we can move on.\n\n{alternative_question}"
+            else:
+                alternative_question = generate_uncertainty_recovery(
+                    user_input,
+                    normalized_step,
+                    recent_messages,
+                )
             if alternative_question:
                 stripped = alternative_question.lstrip()
                 normalized = stripped.lower().replace("’", "'")
@@ -399,6 +455,17 @@ Additional details:
                 cl.user_session.set("metadata", metadata)
                 cl.user_session.set("awaiting_term_details", False)
                 cl.user_session.set("current_term_candidate", None)
+                try:
+                    response = plan_interview_response(messages)
+                except Exception as e:
+                    error_msg = f"Error: {str(e)}"
+                    traceback.print_exc()
+                    response = error_msg
+                    messages.append({"role": "assistant", "content": error_msg})
+                    cl.user_session.set("messages", messages)
+                await send_assistant_message(response)
+                save_checkpoint(message)
+                return
             elif confirmation.get("intent") in {"no", "correction"}:
                 followup = (
                     f'Understood. What is "{term}" in your workflow, and what do you mainly use it for?'
@@ -435,11 +502,27 @@ Additional details:
             cl.user_session.set("metadata", metadata)
             cl.user_session.set("awaiting_term_details", False)
             cl.user_session.set("current_term_candidate", None)
+            try:
+                response = plan_interview_response(messages)
+            except Exception as e:
+                error_msg = f"Error: {str(e)}"
+                traceback.print_exc()
+                response = error_msg
+                messages.append({"role": "assistant", "content": error_msg})
+                cl.user_session.set("messages", messages)
+            await send_assistant_message(response)
+            save_checkpoint(message)
+            return
     else:
         metadata = cl.user_session.get("metadata") or {}
         term_candidate = identify_term_candidate(user_input, messages, metadata)
+        term = str(term_candidate.get("term", "")).strip()
+        if term and term_candidate.get("capture_public_context"):
+            public_context = lookup_term_context(term, str(metadata.get("company", "")).strip())
+            if public_context:
+                metadata = save_term_context(metadata, term, public_context, public_context)
+                cl.user_session.set("metadata", metadata)
         if term_candidate.get("should_clarify"):
-            term = str(term_candidate.get("term", "")).strip()
             public_context = lookup_term_context(term, str(metadata.get("company", "")).strip())
             followup = build_term_clarification_prompt(term, public_context)
             cl.user_session.set("awaiting_term_details", True)
@@ -490,6 +573,24 @@ async def handle_use_case_rating_action(action):
     if not rating_value:
         return
     await _handle_use_case_rating_submission(
+        rating_value,
+        None,
+        save_checkpoint,
+        send_assistant_message,
+    )
+
+
+@cl.action_callback("feasibility_rating")
+async def handle_feasibility_rating_action(action):
+    rating_value = ""
+    payload = getattr(action, "payload", None) or {}
+    if isinstance(payload, dict):
+        rating_value = str(payload.get("rating", "")).strip()
+    if not rating_value:
+        rating_value = str(getattr(action, "value", "") or "").strip()
+    if not rating_value:
+        return
+    await maybe_handle_closure_phase(
         rating_value,
         None,
         save_checkpoint,

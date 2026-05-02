@@ -1,17 +1,30 @@
 import datetime
+import hashlib
 import json
+import os
 import re
 import traceback
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import chainlit as cl
 
 from company_memory import assess_theme_alignment, extract_company_recurring_themes
 from conversation_utils import build_analysis_transcript
-from db import delete_interview_checkpoint, save_session, update_company_insights
+from db import delete_interview_checkpoint, delete_interview_checkpoints_for_session, save_session, update_company_insights
 from report_agent import generate_report
 from report_formatting import generate_markdown_report
 from session_state import POST_INTERVIEW_SURVEY_TEXT, POST_INTERVIEW_SURVEY_URL
 from storage import persist_report_files
+
+
+def _int_env(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
+MAX_USE_CASE_FEEDBACK_ITEMS = _int_env("MAX_USE_CASE_FEEDBACK_ITEMS", 5)
 
 
 def serialize_report_payload(report, use_case_feedback: list) -> str:
@@ -61,23 +74,20 @@ def parse_use_case_rating(user_input: str):
     return None
 
 
-def build_use_case_feedback_invitation(use_cases: list) -> str:
-    count = len(use_cases or [])
-    plural = "use cases" if count != 1 else "use case"
-    return (
-        f"I came up with {count} specific AI {plural} that could reduce repetitive work in your day, "
-        "and I would like your feedback on them before the interview is complete.\n\n"
-        "For each one, I'll ask you to rate it from 1 to 5 and tell me briefly why it would or would not help. "
-        "This should only take a couple of minutes.\n\n"
-        "Would you like to review them now? (yes/no)"
-    )
-
-
-def build_use_case_rating_prompt(use_case: dict, index: int, total: int) -> str:
+def build_use_case_rating_prompt(use_case: dict, index: int, total: int, include_intro: bool = False) -> str:
     name = str(use_case.get("use_case_name", "AI Use Case")).strip() or "AI Use Case"
     description = str(use_case.get("description", "")).strip()
     impact = str(use_case.get("expected_impact", "")).strip()
-    parts = [f"## {name} ({index}/{total})"]
+    parts = []
+    if include_intro:
+        parts.extend(
+            [
+                "Next, we will review the suggested AI use cases one by one.",
+                "For each one, give a brief reaction in your own words first. Then I will ask you to rate it from 1 to 5.",
+                "",
+            ]
+        )
+    parts.append(f"## {name} ({index}/{total})")
     if description:
         parts.extend(["", description])
     if impact and impact.lower() != "not specified":
@@ -109,6 +119,46 @@ def build_use_case_rating_actions() -> list:
     ]
 
 
+def build_use_case_feasibility_rating_actions(dimension: str) -> list:
+    dimension = str(dimension or "").strip().lower()
+    if dimension == "regulatory_risk":
+        labels = [
+            ("low", "Low"),
+            ("medium", "Medium"),
+            ("high", "High"),
+            ("critical", "Critical"),
+            ("skip", "Skip"),
+        ]
+    else:
+        labels = [
+            ("1", "1"),
+            ("2", "2"),
+            ("3", "3"),
+            ("4", "4"),
+            ("5", "5"),
+            ("skip", "Skip"),
+        ]
+    return [
+        cl.Action(
+            name="feasibility_rating",
+            payload={"dimension": dimension, "rating": value},
+            label=label,
+        )
+        for value, label in labels
+    ]
+
+
+def build_use_case_feasibility_rating_followup(dimension: str) -> str:
+    dimension = str(dimension or "").strip().lower()
+    if dimension == "data_quality":
+        return "How would you rate data readiness from 1 to 5, where 1 means not ready and 5 means very ready? You can also skip."
+    if dimension == "explainability":
+        return "How important is explainability from 1 to 5, where 1 means not important and 5 means very important? You can also skip."
+    if dimension == "regulatory_risk":
+        return "How would you rate the regulatory or compliance risk: low, medium, high, or critical? You can also skip."
+    return "How would you rate this feasibility point? You can also skip."
+
+
 def build_use_case_feasibility_prompt(dimension: str, is_first: bool = False, variant: int = 0) -> str:
     intros = [
         "One short feasibility check before we move on.",
@@ -138,15 +188,15 @@ def build_use_case_feasibility_prompt(dimension: str, is_first: bool = False, va
         "regulatory_risk": [
             (
                 "Based on what you know in your role, how does this look in terms of regulatory or compliance risk?\n"
-                "For example, do you see privacy, legal, policy, or approval concerns here?"
+                "For example, do you see privacy, legal, policy, or approval concerns here? Please call it low, medium, high, or critical if you can."
             ),
             (
                 "From what you can see, would something like this raise any privacy, legal, policy, or approval concerns?\n"
-                "I am mainly asking whether there are compliance constraints that could make it harder to use safely."
+                "I am mainly asking whether there are compliance constraints that could make it harder to use safely. A low, medium, high, or critical risk label is useful if you know."
             ),
             (
                 "How risky does this seem from a regulatory or compliance point of view?\n"
-                "For example, do you think there would be privacy, legal, or internal policy concerns to work through?"
+                "For example, do you think there would be privacy, legal, or internal policy concerns to work through? Please estimate low, medium, high, or critical if possible."
             ),
         ],
         "explainability": [
@@ -173,19 +223,66 @@ def build_use_case_feasibility_prompt(dimension: str, is_first: bool = False, va
     return opener + prompt_variant + "\n" + closer
 
 
-def build_validated_use_case_entries(feedback_entries: list, metadata: dict) -> list:
+def build_company_contributor(metadata: dict) -> dict:
+    email = str(metadata.get("email", "") or "").strip().lower()
+    owner_fingerprint = str(cl.user_session.get("owner_fingerprint", "") or "").strip()
+    employee_name = str(metadata.get("employee_name", "") or "").strip()
+    role = str(metadata.get("role", "") or "").strip()
+    department = str(metadata.get("department", "") or "").strip()
+
+    source = ""
+    if email:
+        source = f"email:{email}"
+    elif owner_fingerprint:
+        source = f"owner:{owner_fingerprint}"
+    elif employee_name and employee_name.lower() != "anonymous":
+        source = f"name:{employee_name.lower()}|role:{role.lower()}|department:{department.lower()}"
+
+    contributor_key = ""
+    if source:
+        contributor_key = hashlib.sha256(source.encode("utf-8")).hexdigest()[:24]
+
+    return {
+        "contributor_key": contributor_key,
+        "employee": employee_name or "Anonymous",
+        "role": role,
+        "department": department,
+    }
+
+
+def build_post_interview_survey_url(base_url: str, contributor_key: str) -> str:
+    base_url = str(base_url or "").strip()
+    contributor_key = str(contributor_key or "").strip()
+    if not base_url or not contributor_key:
+        return base_url
+
+    parts = urlsplit(base_url)
+    query_items = [(key, value) for key, value in parse_qsl(parts.query, keep_blank_values=True) if key.lower() != "r"]
+    query_items.append(("r", contributor_key))
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query_items), parts.fragment))
+
+
+def build_validated_use_case_entries(feedback_entries: list, metadata: dict, contributor: dict | None = None) -> list:
     grouped = {}
-    timestamp = datetime.datetime.utcnow().isoformat()
+    timestamp = datetime.datetime.now(datetime.UTC).isoformat()
     employee_name = metadata.get("employee_name", "Anonymous")
     role = metadata.get("role", "")
     department = metadata.get("department", "")
+    contributor_key = str((contributor or {}).get("contributor_key", "") or "").strip()
     for item in feedback_entries or []:
         if not isinstance(item, dict):
             continue
         name = str(item.get("use_case_name", "")).strip()
         if not name:
             continue
-        key = " ".join(name.lower().split())
+        task_name = str(item.get("task_name", "") or "").strip().lower()
+        ai_solution_type = str(item.get("ai_solution_type", "") or "").strip().lower()
+        if task_name and ai_solution_type:
+            key = f"{task_name}::{ai_solution_type}"
+        elif task_name:
+            key = task_name
+        else:
+            key = " ".join(name.lower().split())
         rating = item.get("rating")
         comment = str(item.get("comment", "")).strip()
         group = grouped.setdefault(
@@ -193,11 +290,32 @@ def build_validated_use_case_entries(feedback_entries: list, metadata: dict) -> 
             {
                 "use_case_name": name,
                 "latest_description": str(item.get("description", "")).strip(),
+                "task_name": str(item.get("task_name", "")).strip(),
+                "ai_solution_type": str(item.get("ai_solution_type", "")).strip(),
                 "rating_count": 0,
                 "rating_sum": 0.0,
                 "average_rating": None,
                 "support_count": 0,
                 "concern_count": 0,
+                "data_quality_score_count": 0,
+                "data_quality_score_sum": 0.0,
+                "average_data_quality_score": None,
+                "explainability_score_count": 0,
+                "explainability_score_sum": 0.0,
+                "average_explainability_score": None,
+                "regulatory_risk_counts": {
+                    "low": 0,
+                    "medium": 0,
+                    "high": 0,
+                    "critical": 0,
+                    "unknown": 0,
+                },
+                "safe_to_pursue_counts": {
+                    "yes": 0,
+                    "no": 0,
+                    "unclear": 0,
+                },
+                "contributor_keys": [contributor_key] if contributor_key else [],
                 "comments": [],
                 "last_updated": timestamp,
             },
@@ -211,6 +329,28 @@ def build_validated_use_case_entries(feedback_entries: list, metadata: dict) -> 
             elif rating <= 2:
                 group["concern_count"] += 1
         feasibility = item.get("feasibility_feedback") or {}
+        data_quality_score = feasibility.get("data_quality_score")
+        if isinstance(data_quality_score, int) and 1 <= data_quality_score <= 5:
+            group["data_quality_score_count"] += 1
+            group["data_quality_score_sum"] += data_quality_score
+            group["average_data_quality_score"] = round(
+                group["data_quality_score_sum"] / group["data_quality_score_count"],
+                2,
+            )
+        explainability_score = feasibility.get("explainability_score")
+        if isinstance(explainability_score, int) and 1 <= explainability_score <= 5:
+            group["explainability_score_count"] += 1
+            group["explainability_score_sum"] += explainability_score
+            group["average_explainability_score"] = round(
+                group["explainability_score_sum"] / group["explainability_score_count"],
+                2,
+            )
+        risk = str(feasibility.get("regulatory_risk", "") or "").strip().lower()
+        if risk:
+            group["regulatory_risk_counts"][risk if risk in group["regulatory_risk_counts"] else "unknown"] += 1
+        safe_to_pursue = str(feasibility.get("safe_to_pursue", "") or "").strip().lower()
+        if safe_to_pursue:
+            group["safe_to_pursue_counts"][safe_to_pursue if safe_to_pursue in group["safe_to_pursue_counts"] else "unclear"] += 1
         if comment or any(feasibility.values()):
             group["comments"].append(
                 {
@@ -219,11 +359,60 @@ def build_validated_use_case_entries(feedback_entries: list, metadata: dict) -> 
                     "department": department,
                     "rating": rating,
                     "comment": comment,
+                    "contributor_key": contributor_key,
                     "feasibility_feedback": feasibility,
                     "created_at": timestamp,
                 }
             )
     return list(grouped.values())
+
+
+def _normalize_tokens(*values) -> set[str]:
+    tokens = set()
+    for value in values:
+        tokens.update(re.findall(r"[a-z0-9]+", str(value or "").lower()))
+    return {token for token in tokens if len(token) > 2}
+
+
+def _feedback_relevance_score(use_case: dict, report_payload: dict, metadata: dict) -> int:
+    role_tokens = _normalize_tokens(metadata.get("role"), metadata.get("department"))
+    use_case_tokens = _normalize_tokens(
+        use_case.get("task_name"),
+        use_case.get("use_case_name"),
+        use_case.get("description"),
+        use_case.get("ai_solution_type"),
+    )
+    score = len(role_tokens & use_case_tokens)
+
+    task_name = " ".join(str(use_case.get("task_name", "")).lower().split())
+    for task in report_payload.get("tasks") or []:
+        if not isinstance(task, dict):
+            continue
+        candidate_name = " ".join(str(task.get("name", "")).lower().split())
+        if task_name and candidate_name and (task_name == candidate_name or task_name in candidate_name or candidate_name in task_name):
+            score += 4
+        task_department = str(task.get("department", "") or "").strip().lower()
+        metadata_department = str(metadata.get("department", "") or "").strip().lower()
+        if task_department and metadata_department and task_department == metadata_department:
+            score += 2
+        if task.get("friction_points"):
+            score += 1
+
+    if str(use_case.get("expected_impact", "") or "").strip().lower() not in {"", "not specified"}:
+        score += 1
+    return score
+
+
+def rank_feedback_use_cases(report_payload: dict, metadata: dict) -> list[dict]:
+    use_cases = [uc for uc in (report_payload.get("use_cases") or []) if isinstance(uc, dict)]
+    if not use_cases:
+        return []
+    ranked = sorted(
+        enumerate(use_cases),
+        key=lambda item: (-_feedback_relevance_score(item[1], report_payload, metadata), item[0]),
+    )
+    limit = max(1, MAX_USE_CASE_FEEDBACK_ITEMS)
+    return [item for _idx, item in ranked[:limit]]
 
 
 def ensure_report_payload(messages: list, metadata: dict) -> dict:
@@ -243,21 +432,21 @@ async def begin_use_case_feedback(send_assistant_message, messages: list, metada
     except Exception:
         traceback.print_exc()
         return None
-    use_cases = report_payload.get("use_cases") or []
+    use_cases = rank_feedback_use_cases(report_payload, metadata)
     if not use_cases:
         return None
-    cl.user_session.set("awaiting_use_case_feedback_consent", True)
+    report_payload = dict(report_payload)
+    report_payload["use_cases"] = use_cases
+    cl.user_session.set("pending_report_payload", report_payload)
+    cl.user_session.set("awaiting_use_case_feedback_consent", False)
+    cl.user_session.set("awaiting_use_case_opinion", False)
     cl.user_session.set("awaiting_use_case_rating", False)
     cl.user_session.set("awaiting_use_case_feasibility", False)
     cl.user_session.set("use_case_feedback_index", 0)
     cl.user_session.set("use_case_feedback_entries", [])
     cl.user_session.set("current_use_case_feedback", None)
     cl.user_session.set("current_use_case_feasibility_scope", None)
-    invitation = build_use_case_feedback_invitation(use_cases)
-    messages.append({"role": "assistant", "content": invitation})
-    cl.user_session.set("messages", messages)
-    await send_assistant_message(invitation)
-    return invitation
+    return await send_next_use_case_feedback_prompt(send_assistant_message, messages)
 
 
 async def send_next_use_case_feedback_prompt(send_assistant_message, messages: list):
@@ -266,7 +455,12 @@ async def send_next_use_case_feedback_prompt(send_assistant_message, messages: l
     index = int(cl.user_session.get("use_case_feedback_index", 0) or 0)
     if index >= len(use_cases):
         return None
-    prompt = build_use_case_rating_prompt(use_cases[index], index + 1, len(use_cases))
+    prompt = build_use_case_rating_prompt(
+        use_cases[index],
+        index + 1,
+        len(use_cases),
+        include_intro=index == 0,
+    )
     cl.user_session.set("awaiting_use_case_opinion", True)
     cl.user_session.set("awaiting_use_case_rating", False)
     cl.user_session.set("awaiting_use_case_feasibility", False)
@@ -277,20 +471,17 @@ async def send_next_use_case_feedback_prompt(send_assistant_message, messages: l
 
 
 async def close_interview(send_assistant_message, messages: list, transcript: str, analysis_transcript: str, seniority_level: str, interview_count: int, report_payload: dict = None, use_case_feedback: list = None):
-    cl.user_session.set("report_done", True)
-    cl.user_session.set("collection_step", "__closed__")
     cl.user_session.set("awaiting_final_confirmation", False)
+    cl.user_session.set("awaiting_final_addendum", False)
+    cl.user_session.set("finalization_failed", False)
 
-    closing_msg = "Thank you for your time. Your answers will be taken into consideration. This interview is now complete."
+    if POST_INTERVIEW_SURVEY_URL:
+        closing_msg = "Thank you for your time. I’m finalizing your report now. One final required step will appear next."
+    else:
+        closing_msg = "Thank you for your time. I’m finalizing your report now."
     messages.append({"role": "assistant", "content": closing_msg})
     cl.user_session.set("messages", messages)
     await send_assistant_message(closing_msg)
-    try:
-        draft_id = cl.user_session.get("active_draft_id")
-        if draft_id:
-            delete_interview_checkpoint(str(draft_id))
-    except Exception:
-        traceback.print_exc()
 
     try:
         if report_payload:
@@ -303,20 +494,23 @@ async def close_interview(send_assistant_message, messages: list, transcript: st
             report = generate_report(analysis_transcript)
 
         session_id = cl.user_session.get("session_id")
-        metadata = cl.user_session.get("metadata")
+        metadata = cl.user_session.get("metadata") or {}
+        contributor = build_company_contributor(metadata)
         md_content = generate_markdown_report(report, metadata)
         md_content = append_use_case_feedback_markdown(md_content, use_case_feedback or [])
         report_json = serialize_report_payload(report, use_case_feedback or [])
-        file_locations = persist_report_files(session_id, report_json, md_content)
+        persist_report_files(session_id, report_json, md_content)
+        company_name = metadata.get("company") or "Unknown company"
         save_session(
-            company=metadata["company"],
-            employee=metadata["employee_name"],
-            department=metadata["department"],
-            role=metadata["role"],
+            company=company_name,
+            employee=metadata.get("employee_name", "Anonymous"),
+            department=metadata.get("department", ""),
+            role=metadata.get("role", ""),
             seniority_level=seniority_level,
             transcript=transcript,
             report_json=report_json,
             report_md=md_content,
+            contributor=contributor,
         )
         north_star = (
             report.north_star_alignment
@@ -347,14 +541,17 @@ async def close_interview(send_assistant_message, messages: list, transcript: st
                     "contradiction_evidence": item.get("evidence", ""),
                 }
             )
-        update_company_insights(
-            company=metadata["company"],
-            north_star=north_star,
-            tasks=[t.model_dump() for t in report.tasks],
-            use_cases=[uc.model_dump() for uc in report.use_cases],
-            validated_use_cases=build_validated_use_case_entries(use_case_feedback or [], metadata),
-            recurring_themes=(recurring_themes or []) + contradiction_updates,
-        )
+        if metadata.get("company"):
+            update_company_insights(
+                company=company_name,
+                north_star=north_star,
+                department=metadata.get("department", ""),
+                tasks=[t.model_dump() for t in report.tasks],
+                use_cases=[uc.model_dump() for uc in report.use_cases],
+                validated_use_cases=build_validated_use_case_entries(use_case_feedback or [], metadata, contributor=contributor),
+                recurring_themes=(recurring_themes or []) + contradiction_updates,
+                contributor=contributor,
+            )
 
         download_elements = [
             cl.File(
@@ -379,25 +576,56 @@ async def close_interview(send_assistant_message, messages: list, transcript: st
             )
             await download_msg.send()
 
+        completion_msg = "This interview is now complete. Your answers will be taken into consideration."
+        messages.append({"role": "assistant", "content": completion_msg})
+        cl.user_session.set("messages", messages)
+        await send_assistant_message(completion_msg)
+
         if POST_INTERVIEW_SURVEY_URL:
+            survey_url = build_post_interview_survey_url(
+                POST_INTERVIEW_SURVEY_URL,
+                str(contributor.get("contributor_key", "") or ""),
+            )
             survey_msg = cl.Message(
                 content=(
                     f"{POST_INTERVIEW_SURVEY_TEXT}\n\n"
-                    f"[Open the experience survey]({POST_INTERVIEW_SURVEY_URL})"
+                    f"[Continue to the experience survey in a new tab]({survey_url})"
                 ),
                 author="Interviewer",
             )
             await survey_msg.send()
+        cl.user_session.set("report_done", True)
+        cl.user_session.set("collection_step", "__closed__")
+        try:
+            draft_id = cl.user_session.get("active_draft_id")
+            if draft_id:
+                delete_interview_checkpoint(str(draft_id))
+            if session_id:
+                delete_interview_checkpoints_for_session(
+                    str(session_id),
+                    owner_fingerprint=str(cl.user_session.get("owner_fingerprint", "") or "").strip(),
+                )
+        except Exception:
+            traceback.print_exc()
     except Exception:
         traceback.print_exc()
+        error_msg = (
+            "I couldn't finalize the report because of a processing or storage error. "
+            "Your draft is still saved; type 'finish interview' to retry finalization."
+        )
+        messages.append({"role": "assistant", "content": error_msg})
+        cl.user_session.set("messages", messages)
+        cl.user_session.set("finalization_failed", True)
+        await send_assistant_message(error_msg)
         return
     finally:
-        cl.user_session.set("pending_report_payload", None)
-        cl.user_session.set("awaiting_use_case_feedback_consent", False)
-        cl.user_session.set("awaiting_use_case_opinion", False)
-        cl.user_session.set("awaiting_use_case_rating", False)
-        cl.user_session.set("awaiting_use_case_feasibility", False)
-        cl.user_session.set("use_case_feedback_index", 0)
-        cl.user_session.set("use_case_feedback_entries", [])
-        cl.user_session.set("current_use_case_feedback", None)
-        cl.user_session.set("current_use_case_feasibility_scope", None)
+        if cl.user_session.get("report_done"):
+            cl.user_session.set("pending_report_payload", None)
+            cl.user_session.set("awaiting_use_case_feedback_consent", False)
+            cl.user_session.set("awaiting_use_case_opinion", False)
+            cl.user_session.set("awaiting_use_case_rating", False)
+            cl.user_session.set("awaiting_use_case_feasibility", False)
+            cl.user_session.set("use_case_feedback_index", 0)
+            cl.user_session.set("use_case_feedback_entries", [])
+            cl.user_session.set("current_use_case_feedback", None)
+            cl.user_session.set("current_use_case_feasibility_scope", None)
