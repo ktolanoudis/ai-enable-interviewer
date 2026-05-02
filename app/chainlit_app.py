@@ -164,6 +164,38 @@ def _with_single_uncertainty_ack(text: str, acknowledgement: str) -> str:
     return acknowledgement if not body else f"{acknowledgement}\n\n{body}"
 
 
+def _last_assistant_message(messages: list) -> str:
+    for item in reversed(messages or []):
+        if isinstance(item, dict) and str(item.get("role", "")).strip().lower() == "assistant":
+            return str(item.get("content", "") or "").strip()
+    return ""
+
+
+def _is_yes_no_confirmation_answer(user_input: str, messages: list) -> bool:
+    answer = re.sub(r"\s+", " ", str(user_input or "").strip().lower().replace("’", "'")).strip(" .!?")
+    if answer not in {
+        "yes",
+        "y",
+        "yeah",
+        "yep",
+        "yea",
+        "correct",
+        "right",
+        "true",
+        "no",
+        "n",
+        "nope",
+        "nah",
+        "not really",
+        "not exactly",
+    }:
+        return False
+    question = re.sub(r"\s+", " ", _last_assistant_message(messages).strip().lower())
+    if not question.endswith("?"):
+        return False
+    return bool(re.match(r"^(does|do|did|is|are|was|were|would|could|can|should|has|have|had)\b", question))
+
+
 async def _restore_checkpoint_if_available(draft_id: str = "", owner: str = "", allow_fallback: bool = False) -> bool:
     if cl.user_session.get("checkpoint_restored_this_connection"):
         return True
@@ -541,7 +573,12 @@ Additional details:
             return
     
     # Input validation (only for non-meta questions)
-    if (not stop_addendum_mode) and (not cl.user_session.get("awaiting_term_details", False)) and is_answer_too_short(user_input):
+    if (
+        (not stop_addendum_mode)
+        and (not cl.user_session.get("awaiting_term_details", False))
+        and (not _is_yes_no_confirmation_answer(user_input, messages))
+        and is_answer_too_short(user_input)
+    ):
         completeness = classify_answer_completeness(user_input, context, messages)
         if completeness.get("intent") == "too_short":
             await send_assistant_message("Could you provide a bit more detail? (Or type 'skip' to move on)")

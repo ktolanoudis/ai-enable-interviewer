@@ -99,6 +99,64 @@ class SkipFlowTests(unittest.TestCase):
         self.assertEqual(planner_messages[-1]["content"], "Skip this question and move to a different topic.")
         self.assertEqual(sent, ["That's okay, we can move on.\n\nWhat product work should we focus on next?"])
 
+    def test_yes_no_confirmation_answer_does_not_trigger_short_answer_prompt(self):
+        fake_chainlit = types.SimpleNamespace(user_session=_FakeUserSession())
+        fake_chainlit.user_session.set("collection_step", None)
+        fake_chainlit.user_session.set("report_done", False)
+        fake_chainlit.user_session.set("metadata", {"role": "Associate"})
+        fake_chainlit.user_session.set(
+            "messages",
+            [
+                {
+                    "role": "assistant",
+                    "content": "Does manually checking expert and client availability also slow you down in your work?",
+                },
+            ],
+        )
+        sent = []
+
+        async def fake_send(content, actions=None):
+            sent.append(content)
+
+        with patch.object(chainlit_app, "cl", fake_chainlit), patch.object(
+            chainlit_app,
+            "classify_message_intent",
+            return_value={"intent": "answer"},
+        ), patch.object(
+            chainlit_app,
+            "classify_answer_completeness",
+            return_value={"intent": "too_short"},
+        ) as completeness_mock, patch.object(
+            chainlit_app,
+            "plan_interview_response",
+            return_value="What part of that availability check is most manual?",
+        ) as planner_mock, patch.object(
+            chainlit_app,
+            "send_assistant_message",
+            side_effect=fake_send,
+        ), patch.object(
+            chainlit_app,
+            "maybe_handle_company_context_phase",
+            AsyncMock(return_value=False),
+        ), patch.object(
+            chainlit_app,
+            "maybe_handle_closure_phase",
+            AsyncMock(return_value=False),
+        ), patch.object(
+            chainlit_app,
+            "active_draft_id",
+            return_value="draft_1",
+        ), patch.object(
+            chainlit_app,
+            "save_checkpoint",
+            lambda *args, **kwargs: None,
+        ):
+            asyncio.run(chainlit_app.main(types.SimpleNamespace(content="yeah")))
+
+        completeness_mock.assert_not_called()
+        planner_mock.assert_called_once()
+        self.assertEqual(sent, ["What part of that availability check is most manual?"])
+
 
 if __name__ == "__main__":
     unittest.main()
