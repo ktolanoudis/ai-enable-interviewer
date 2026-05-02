@@ -45,6 +45,30 @@ class PromptDeliveryTests(unittest.TestCase):
             "**Let's start:** What are your main day-to-day tasks?",
         )
 
+    def test_send_assistant_message_does_not_append_progress_markup(self):
+        fake_chainlit = types.SimpleNamespace(user_session=_FakeUserSession())
+        sent_messages = []
+
+        class FakeMessage:
+            def __init__(self, content="", author=None, actions=None, **kwargs):
+                self.content = content
+                self.author = author
+                self.actions = actions or []
+
+            async def send(self):
+                sent_messages.append(self)
+
+        fake_chainlit.Message = FakeMessage
+
+        with patch.object(company_flow, "cl", fake_chainlit):
+            asyncio.run(company_flow.send_assistant_message("**What's your position/role?**"))
+
+        self.assertEqual(len(sent_messages), 1)
+        self.assertEqual(sent_messages[0].content, "**What's your position/role?**")
+        self.assertNotIn("ai-enable-progress", sent_messages[0].content)
+        self.assertNotIn("<span", sent_messages[0].content)
+        self.assertNotIn("data-ai-enable-progress", sent_messages[0].content)
+
     def test_start_interview_with_company_context_sends_prompt_as_standalone_message(self):
         fake_chainlit = types.SimpleNamespace(user_session=_FakeUserSession())
         sent_messages = []

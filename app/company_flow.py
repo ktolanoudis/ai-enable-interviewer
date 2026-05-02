@@ -7,19 +7,11 @@ from company_research import format_company_context, normalize_website_url, rese
 from conversation_utils import get_interview_strategy_description, has_valid_north_star, split_prompt_context
 from db import get_company_insights, get_company_interview_count
 from role_classifier import classify_seniority, should_ask_north_star
-from session_state import WELCOME_TEXT, compute_interview_progress
+from session_state import WELCOME_TEXT
 
 
 async def send_assistant_message(content: str, actions=None) -> None:
-    try:
-        progress = max(0.0, min(1.0, float(compute_interview_progress())))
-        progress_marker = (
-            f'\n\n<span data-ai-enable-progress="{progress:.4f}" '
-            'style="display:none!important;visibility:hidden!important;height:0;overflow:hidden"></span>'
-        )
-    except Exception:
-        progress_marker = ""
-    await cl.Message(content=content + progress_marker, author="Interviewer", actions=actions or []).send()
+    await cl.Message(content=content, author="Interviewer", actions=actions or []).send()
 
 
 async def send_welcome_prompt() -> None:
