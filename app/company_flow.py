@@ -23,7 +23,7 @@ def collection_prompt_for_step(step: str) -> str:
         "name": WELCOME_TEXT,
         "company": "**What company do you work for?**",
         "company_website": "**What is your company website URL?** (e.g., `https://example.com`, or type 'skip')",
-        "email": "**What's your work email?**",
+        "email": "**What's your work email?** (or type 'skip' if you prefer not to share it)",
         "department": "**What department do you work in?**",
         "role": "**What's your position/role?**",
     }
@@ -58,7 +58,9 @@ def metadata_value_from_intent(field: str, parsed: dict):
 
 
 def next_collection_step(metadata: dict) -> str | None:
-    for step, key in (("email", "email"), ("department", "department"), ("role", "role")):
+    if not str((metadata or {}).get("email") or "").strip() and not (metadata or {}).get("email_opt_out"):
+        return "email"
+    for step, key in (("department", "department"), ("role", "role")):
         if not str((metadata or {}).get(key) or "").strip():
             return step
     return None
@@ -344,6 +346,7 @@ async def handle_collection_step(collection_step: str, user_input: str, save_che
             await send_assistant_message("Please provide a valid work email address.")
             save_checkpoint(message)
             return True
+        metadata["email_opt_out"] = str(parsed.get("intent", "")).strip().lower() in {"skip", "anonymous"}
         metadata["email"] = metadata_value_from_intent("email", parsed)
         cl.user_session.set("metadata", metadata)
         cl.user_session.set("collection_step", "department")

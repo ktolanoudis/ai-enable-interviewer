@@ -9,12 +9,34 @@ def _fallback_parse(field: str, user_message: str) -> dict:
     text = str(user_message or "").strip()
 
     if field == "email":
+        if _looks_like_privacy_refusal(text):
+            return {"intent": "skip", "value": ""}
         if re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", text):
             return {"intent": "provide", "value": text.lower()}
         if "@" in text:
             return {"intent": "invalid", "value": text}
 
     return {"intent": "provide", "value": text}
+
+
+def _looks_like_privacy_refusal(text: str) -> bool:
+    normalized = re.sub(r"\s+", " ", str(text or "").lower()).strip()
+    if not normalized:
+        return False
+    refusal_markers = [
+        "prefer not",
+        "rather not",
+        "not share",
+        "don't want to share",
+        "do not want to share",
+        "cannot share",
+        "can't share",
+        "won't share",
+        "will not share",
+        "privacy",
+        "personal email",
+    ]
+    return any(marker in normalized for marker in refusal_markers)
 
 
 def _deterministic_parse(field: str, user_message: str) -> Optional[dict]:
@@ -37,6 +59,8 @@ def _deterministic_parse(field: str, user_message: str) -> Optional[dict]:
         return {"intent": "skip", "value": ""}
 
     if field == "email":
+        if _looks_like_privacy_refusal(text):
+            return {"intent": "skip", "value": ""}
         email_match = re.search(r"[^@\s,;<>]+@[^@\s,;<>]+\.[^@\s,;<>]+", text)
         if email_match:
             return {"intent": "provide", "value": email_match.group(0).lower()}

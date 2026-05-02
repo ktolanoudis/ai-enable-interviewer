@@ -6,9 +6,10 @@
   var SURVEY_REDIRECT_KEY = 'ai_enable_last_survey_redirect_href';
   var progressBarFill = null;
   var progressBarLabel = null;
-  var progressObserver = null;
+  var progressInterval = null;
   var maxInterviewProgress = 0;
   var surveyRedirectTimer = null;
+  var progressUpdateTimer = null;
 
   function setTitle() {
     document.title = 'AI-Enable Interviewer';
@@ -42,8 +43,7 @@
   function ensureInterviewProgressBar() {
     var existing = document.getElementById('interview-progress-shell');
     var shouldShow = shouldShowInterviewProgressBar();
-    var estimatedProgress = estimateInterviewProgress(document.body ? document.body.innerText || '' : '');
-    var progress = Math.max(maxInterviewProgress, estimatedProgress);
+    var progress = maxInterviewProgress || 0.06;
     var mountInfo = progress >= 0.95 ? null : findHeaderMountInfo();
     if (existing) {
       existing.style.display = shouldShow ? 'flex' : 'none';
@@ -224,8 +224,7 @@
     return Math.max(min, Math.min(max, value));
   }
 
-  function countUserMessages() {
-    var text = document.body ? document.body.innerText || '' : '';
+  function countUserMessages(text) {
     var matches = text.match(/Avatar for User/gi);
     return matches ? matches.length : 0;
   }
@@ -273,23 +272,6 @@
     if (text.indexOf('Your report is ready.') !== -1) return 1;
     if (text.indexOf('Continue to the experience survey in a new tab') !== -1) return 1;
 
-    var progressNodes = document.querySelectorAll('[data-ai-enable-progress]');
-    var latestProgressNode = progressNodes.length ? progressNodes[progressNodes.length - 1] : null;
-    if (latestProgressNode) {
-      var attr = latestProgressNode.getAttribute('data-ai-enable-progress');
-      var parsed = parseFloat(attr);
-      if (!Number.isNaN(parsed)) {
-        return clamp(parsed, 0, 1);
-      }
-    }
-    var explicitMatch = text.match(/ai_enable_progress:([0-9.]+)/);
-    if (explicitMatch) {
-      var explicit = parseFloat(explicitMatch[1]);
-      if (!Number.isNaN(explicit)) {
-        return clamp(explicit, 0, 1);
-      }
-    }
-
     var useCaseMatch = text.match(/\((\d+)\/(\d+)\)/);
     if (useCaseMatch) {
       var current = parseInt(useCaseMatch[1], 10);
@@ -310,7 +292,7 @@
     if (text.indexOf('What department do you work in?') !== -1) return 0.2;
     if (text.indexOf('What\'s your position/role?') !== -1) return 0.22;
 
-    var userMessages = countUserMessages();
+    var userMessages = countUserMessages(text);
     if (userMessages > 0) {
       return clamp(0.12 + userMessages * 0.045, 0.12, 0.74);
     }
@@ -350,7 +332,11 @@
   }
 
   function scheduleProgressUpdate() {
-    window.requestAnimationFrame(updateInterviewProgressBar);
+    if (progressUpdateTimer) return;
+    progressUpdateTimer = window.setTimeout(function () {
+      progressUpdateTimer = null;
+      window.requestAnimationFrame(updateInterviewProgressBar);
+    }, 500);
   }
 
   function getStoredSurveyRedirectHref() {
@@ -408,16 +394,21 @@
   }
 
   function observeProgressTriggers() {
-    if (progressObserver || !document.body) return;
-    progressObserver = new MutationObserver(function () {
-      scheduleProgressUpdate();
-    });
-    progressObserver.observe(document.body, {
-      childList: true,
-      subtree: true,
-      characterData: true,
-    });
+    if (progressInterval) return;
+    progressInterval = window.setInterval(scheduleProgressUpdate, 3000);
     window.addEventListener('resize', scheduleProgressUpdate);
+    document.addEventListener('visibilitychange', function () {
+      if (!document.hidden) {
+        scheduleProgressUpdate();
+      }
+    });
+    document.addEventListener('click', function (event) {
+      var target = event.target;
+      if (!target || !target.closest) return;
+      if (target.closest('button, a, [role="button"]')) {
+        scheduleProgressUpdate();
+      }
+    }, true);
   }
 
   function setCookie(name, value, maxAgeSeconds) {
