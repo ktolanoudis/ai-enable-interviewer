@@ -81,6 +81,7 @@ Rules:
 - friction_level: assess based on time wasted, repetition, error-proneness, user frustration
 - friction_points: extract specific bottlenecks (e.g., "manual data entry", "waiting for approvals")
 - manual_steps: look for repetitive actions (copy-paste, data entry, clicking through screens)
+- existing_ai_initiatives: capture AI/automation the user says already exists, is already used, or is currently being implemented; do not treat these as unmet opportunities unless the user states a gap.
 
 "missing" should be a checklist, e.g.:
 ["role", "detailed task breakdown", "friction severity", "time spent per task", "business goals", 
@@ -158,9 +159,9 @@ def build_question_planner_prompt(seniority_level: str, interview_count: int,
     strategy_map = {
         "executive": "STRATEGIC - Focus on organization-wide goals, competitive pressures, budget priorities, transformation readiness",
         "senior": "TACTICAL - Focus on department goals, cross-functional processes, team capacity, implementation feasibility",
-        "intermediate": "OPERATIONAL - Focus on specific processes, daily workflows, tools used, time spent on tasks",
+        "intermediate": "OPERATIONAL - Focus on specific processes, daily workflows, tools used, friction, and only rough time baselines for the main bottlenecks",
         "junior": "TASK-LEVEL - Focus on daily tasks, repetitive work, tools, errors, handoffs",
-        "intern": "TASK-LEVEL - Focus on tasks performed, time-consuming work, tools used, questions asked to colleagues"
+        "intern": "TASK-LEVEL - Focus on tasks performed, repetitive work, tools used, questions asked to colleagues, and only rough time baselines for the main bottlenecks"
     }
     
     strategy = strategy_map.get(seniority_level, strategy_map["intermediate"])
@@ -254,7 +255,7 @@ Focus: Department-level optimization, team capacity, feasibility
     elif seniority_level == "intermediate":
         base_prompt += """
 1. FIRST: Ask about their role and main processes they manage
-2. THEN: Step-by-step task breakdown, tools used, time spent
+2. THEN: Step-by-step task breakdown, tools used, and friction points
 3. NEXT: Friction points - what's repetitive, manual, error-prone
 4. FINALLY: Data quality, regulatory concerns, technical constraints
 
@@ -264,7 +265,7 @@ Focus: Detailed process knowledge, practical friction points, implementation rea
     else:  # junior or intern
         base_prompt += """
 1. FIRST: Ask about their daily tasks and responsibilities
-2. THEN: What takes the most time, what's repetitive
+2. THEN: What is repetitive, manual, frustrating, or most time-consuming
 3. NEXT: Tools they use, common errors or frustrations
 4. FINALLY: What would make their work easier
 
@@ -284,6 +285,10 @@ Rules for each question:
 - Do not over-drill into one task when the user has already answered or pushed back.
 - If the user says a task is not frustrating or they do not know a detail, move to another useful area.
 - Prefer high-value workflow information over low-value trivia such as exact counts, article counts, or before/during/after rituals.
+- Ask time-spent questions sparingly. One rough baseline for the biggest bottleneck is enough unless the user volunteers more.
+- Do not ask a time-spent question for every task. Prefer asking what makes the task hard, repetitive, error-prone, or valuable to automate.
+- If the user already gave a rough time estimate for a workflow, do not ask another time question about a subtask unless it is clearly the main bottleneck and still ambiguous.
+- If you need impact context, ask for a qualitative scale such as "which part takes the most effort" instead of another exact duration.
 - If a recurring company theme seems relevant, you may ask whether that issue affects this person's work too.
 - Ask recurring themes as validation questions, not as assumptions.
 - Be conversational and natural

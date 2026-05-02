@@ -10,6 +10,64 @@ from session_state import DEBUG_QUESTION_FLOW, MAX_INTERVIEW_USER_TURNS, READY_S
 MAX_THEME_VALIDATIONS_PER_INTERVIEW = 2
 
 
+def _is_time_spent_question(text: str) -> bool:
+    lowered = str(text or "").strip().lower()
+    if not lowered:
+        return False
+    patterns = (
+        "how long",
+        "how much time",
+        "how many hours",
+        "how many minutes",
+        "time do you",
+        "time does it",
+        "spend on",
+        "spend each",
+        "spend per",
+        "take you",
+        "does it take",
+    )
+    return any(pattern in lowered for pattern in patterns)
+
+
+def _time_baseline_count(notes: dict, messages: list) -> int:
+    count = 0
+    for task in (notes or {}).get("tasks", []) or []:
+        if not isinstance(task, dict):
+            continue
+        value = str(task.get("time_spent", "") or "").strip().lower()
+        if value and value not in {"not specified", "none", "null", "unknown"}:
+            count += 1
+    for item in messages or []:
+        if not isinstance(item, dict) or str(item.get("role", "")).strip().lower() != "assistant":
+            continue
+        if _is_time_spent_question(str(item.get("content", "") or "")):
+            count += 1
+    return count
+
+
+def _should_suppress_time_question(planned_question: str, notes: dict, messages: list) -> bool:
+    if not _is_time_spent_question(planned_question):
+        return False
+    return _time_baseline_count(notes, messages) >= 1
+
+
+def _fallback_non_time_question(notes: dict, metadata: dict) -> str:
+    tasks = [task for task in (notes or {}).get("tasks", []) or [] if isinstance(task, dict)]
+    high_friction_tasks = [
+        task for task in tasks
+        if str(task.get("friction_level", "") or "").strip().lower() in {"high", "critical", "medium"}
+    ]
+    task = high_friction_tasks[0] if high_friction_tasks else (tasks[0] if tasks else {})
+    task_name = str(task.get("name", "") or "").strip()
+    if task_name:
+        return f"What makes {task_name.lower()} difficult, repetitive, or worth improving?"
+    role = str((metadata or {}).get("role", "") or "").strip().lower()
+    if role:
+        return f"Which part of your work as {role} feels most repetitive or manual?"
+    return "Which part of your workflow feels most repetitive, manual, or worth improving?"
+
+
 def _phrase_theme_validation_question(theme: dict) -> str:
     label = str((theme or {}).get("label", "")).strip()
     if label:
@@ -214,6 +272,8 @@ def plan_interview_response(messages: list) -> str:
         ask_north_star,
         company_context,
     )
+    if _should_suppress_time_question(planned_response, notes, messages):
+        planned_response = _fallback_non_time_question(notes, metadata)
     response = avoid_immediate_question_repeat(planned_response, messages)
     debug_log(
         "question_selected",

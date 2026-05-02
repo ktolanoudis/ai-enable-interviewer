@@ -2,7 +2,7 @@ import asyncio
 
 import chainlit as cl
 
-from collection_intent import parse_collection_response
+from collection_intent import normalize_collection_value, parse_collection_response
 from company_research import format_company_context, normalize_website_url, research_company
 from conversation_utils import get_interview_strategy_description, has_valid_north_star, split_prompt_context
 from db import get_company_insights, get_company_interview_count
@@ -24,7 +24,7 @@ def collection_prompt_for_step(step: str) -> str:
         "company": "**What company do you work for?**",
         "company_website": "**What is your company website URL?** (e.g., `https://example.com`, or type 'skip')",
         "email": "**What's your work email?** (or type 'skip' if you prefer not to share it)",
-        "department": "**What department do you work in?**",
+        "department": "**What department or function do you work in?** (e.g., Sales, Operations, Teaching)",
         "role": "**What's your position/role?**",
     }
     return prompts.get(step or "", "")
@@ -53,7 +53,7 @@ def metadata_value_from_intent(field: str, parsed: dict):
     if field in {"department", "role"}:
         if intent in {"skip", "anonymous"}:
             return ""
-        return value
+        return normalize_collection_value(field, value)
     return value
 
 

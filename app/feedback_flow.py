@@ -27,6 +27,39 @@ def _int_env(name: str, default: int) -> int:
 MAX_USE_CASE_FEEDBACK_ITEMS = _int_env("MAX_USE_CASE_FEEDBACK_ITEMS", 5)
 
 
+def is_existing_capability_feedback(text: str) -> bool:
+    normalized = re.sub(r"\s+", " ", str(text or "").strip().lower().replace("’", "'"))
+    if not normalized:
+        return False
+    markers = (
+        "i already do this",
+        "we already do this",
+        "already do this",
+        "i already use",
+        "we already use",
+        "already use",
+        "this already exists",
+        "already exists",
+        "we have this",
+        "we already have this",
+        "already implemented",
+        "currently implemented",
+        "already in place",
+        "company is implementing",
+        "we are implementing",
+        "we're implementing",
+        "being implemented",
+        "existing tool",
+        "existing system",
+        "current tool does this",
+    )
+    return any(marker in normalized for marker in markers)
+
+
+def use_case_feedback_status_from_comment(text: str) -> str:
+    return "existing_capability" if is_existing_capability_feedback(text) else "new_opportunity_feedback"
+
+
 def serialize_report_payload(report, use_case_feedback: list) -> str:
     payload = {"report": report.model_dump(), "employee_use_case_feedback": use_case_feedback or []}
     return json.dumps(payload, indent=2)
@@ -40,9 +73,14 @@ def append_use_case_feedback_markdown(md_content: str, use_case_feedback: list) 
         name = str(item.get("use_case_name", "AI Use Case")).strip() or "AI Use Case"
         rating = item.get("rating")
         reason = str(item.get("comment", "")).strip()
+        status = str(item.get("status", "") or "").strip()
         feasibility = item.get("feasibility_feedback") or {}
         lines.append(f"### Feedback {idx}: {name}")
-        lines.append(f"- **Rating:** {rating}/5" if rating is not None else "- **Rating:** Skipped")
+        if status == "existing_capability":
+            lines.append("- **Status:** Existing capability / already in use")
+            lines.append(f"- **Current Solution Rating:** {rating}/5" if rating is not None else "- **Current Solution Rating:** Skipped")
+        else:
+            lines.append(f"- **Rating:** {rating}/5" if rating is not None else "- **Rating:** Skipped")
         lines.append(f"- **Comment:** {reason}" if reason else "- **Comment:** No additional comment provided.")
         if feasibility:
             lines.append("- **Feasibility Review:**")
@@ -96,7 +134,12 @@ def build_use_case_rating_prompt(use_case: dict, index: int, total: int, include
     return "\n".join(parts)
 
 
-def build_use_case_rating_followup() -> str:
+def build_use_case_rating_followup(feedback_status: str = "") -> str:
+    if feedback_status == "existing_capability":
+        return (
+            "Since this already exists or is already being done, how well does the current solution work from 1 to 5, "
+            "where 1 means it works poorly and 5 means it works very well? You can also type 'skip'."
+        )
     return "How would you rate it from 1 to 5, where 1 means not useful and 5 means very useful? You can also type 'skip'."
 
 
@@ -295,6 +338,10 @@ def build_validated_use_case_entries(feedback_entries: list, metadata: dict, con
                 "rating_count": 0,
                 "rating_sum": 0.0,
                 "average_rating": None,
+                "existing_capability_count": 0,
+                "existing_solution_rating_count": 0,
+                "existing_solution_rating_sum": 0.0,
+                "average_existing_solution_rating": None,
                 "support_count": 0,
                 "concern_count": 0,
                 "data_quality_score_count": 0,
@@ -320,14 +367,25 @@ def build_validated_use_case_entries(feedback_entries: list, metadata: dict, con
                 "last_updated": timestamp,
             },
         )
+        status = str(item.get("status", "") or "").strip().lower()
         if isinstance(rating, int):
-            group["rating_count"] += 1
-            group["rating_sum"] += rating
-            group["average_rating"] = round(group["rating_sum"] / group["rating_count"], 2)
-            if rating >= 4:
-                group["support_count"] += 1
-            elif rating <= 2:
-                group["concern_count"] += 1
+            if status == "existing_capability":
+                group["existing_solution_rating_count"] += 1
+                group["existing_solution_rating_sum"] += rating
+                group["average_existing_solution_rating"] = round(
+                    group["existing_solution_rating_sum"] / group["existing_solution_rating_count"],
+                    2,
+                )
+            else:
+                group["rating_count"] += 1
+                group["rating_sum"] += rating
+                group["average_rating"] = round(group["rating_sum"] / group["rating_count"], 2)
+                if rating >= 4:
+                    group["support_count"] += 1
+                elif rating <= 2:
+                    group["concern_count"] += 1
+        if status == "existing_capability":
+            group["existing_capability_count"] += 1
         feasibility = item.get("feasibility_feedback") or {}
         data_quality_score = feasibility.get("data_quality_score")
         if isinstance(data_quality_score, int) and 1 <= data_quality_score <= 5:
@@ -358,6 +416,7 @@ def build_validated_use_case_entries(feedback_entries: list, metadata: dict, con
                     "role": role,
                     "department": department,
                     "rating": rating,
+                    "status": status,
                     "comment": comment,
                     "contributor_key": contributor_key,
                     "feasibility_feedback": feasibility,

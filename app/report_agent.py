@@ -111,6 +111,9 @@ Critical Rules:
   * Hard Slog: value_score < 7 AND feasibility_score < 7
 - Focus on use cases where AI transforms well-defined, repetitive tasks
 - Prioritize high-friction tasks that align with business goals
+- Do NOT present AI/automation that the employee says already exists, is already used, or is currently being implemented as a new proposed opportunity.
+- If an existing or in-flight AI capability is relevant, mention it only as a current system, existing AI initiative, risk, or next-step optimization; propose only the unmet gap around it.
+- If there is no clear unmet gap beyond the existing/in-flight capability, exclude that candidate from use_cases.
 """
 
 def _extract_json_loose(text: str) -> dict:

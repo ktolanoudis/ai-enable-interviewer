@@ -146,6 +146,24 @@ def _abandon_open_drafts_for_fresh_chat() -> str:
     return owner
 
 
+_UNCERTAINTY_ACK_RE = re.compile(
+    r"^\s*(?:(?:sure|okay|ok)[,.]?\s*)?"
+    r"(?:(?:that(?:'|’)?s|that is|it(?:'|’)?s|it is)\s+(?:totally\s+)?okay|no problem|no worries)"
+    r"[^.!?\n]*(?:[.!?]+|\n+)\s*",
+    re.I,
+)
+
+
+def _with_single_uncertainty_ack(text: str, acknowledgement: str) -> str:
+    body = str(text or "").strip()
+    while body:
+        stripped = _UNCERTAINTY_ACK_RE.sub("", body, count=1).lstrip()
+        if stripped == body:
+            break
+        body = stripped
+    return acknowledgement if not body else f"{acknowledgement}\n\n{body}"
+
+
 async def _restore_checkpoint_if_available(draft_id: str = "", owner: str = "", allow_fallback: bool = False) -> bool:
     if cl.user_session.get("checkpoint_restored_this_connection"):
         return True
@@ -382,12 +400,11 @@ async def main(message: cl.Message):
 
         if should_skip:
             recent_messages = cl.user_session.get("messages") or []
-            if str(user_input or "").strip().lower() in {"skip", "pass", "move on"}:
+            explicit_skip = str(user_input or "").strip().lower() in {"skip", "pass", "move on"}
+            if explicit_skip:
                 skip_messages = list(recent_messages)
                 skip_messages.append({"role": "user", "content": "Skip this question and move to a different topic."})
                 alternative_question = plan_interview_response(skip_messages)
-                if alternative_question:
-                    alternative_question = f"That's okay, we can move on.\n\n{alternative_question}"
             else:
                 alternative_question = generate_uncertainty_recovery(
                     user_input,
@@ -395,27 +412,10 @@ async def main(message: cl.Message):
                     recent_messages,
                 )
             if alternative_question:
-                stripped = alternative_question.lstrip()
-                normalized = stripped.lower().replace("’", "'")
-                acknowledgement_starts = (
-                    "that's okay",
-                    "thats okay",
-                    "it's okay",
-                    "its okay",
-                    "it's totally okay",
-                    "its totally okay",
-                    "it is okay",
-                    "it is totally okay",
-                    "no problem",
-                    "no worries",
-                    "that is okay",
-                    "that is totally okay",
+                alternative_question = _with_single_uncertainty_ack(
+                    alternative_question,
+                    "That's okay, we can move on." if explicit_skip else "That's okay, we can move on to the next question.",
                 )
-                if not normalized.startswith(acknowledgement_starts):
-                    alternative_question = (
-                        "That's okay, we can move on to the next question.\n\n"
-                        f"{alternative_question}"
-                    )
 
         if should_skip and alternative_question:
             messages = cl.user_session.get("messages")

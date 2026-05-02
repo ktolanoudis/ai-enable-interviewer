@@ -13,6 +13,7 @@ from feedback_flow import (
     close_interview,
     parse_use_case_rating,
     send_next_use_case_feedback_prompt,
+    use_case_feedback_status_from_comment,
 )
 from meta_question_handler import (
     assess_use_case_feasibility_scope,
@@ -193,6 +194,7 @@ async def _skip_current_use_case_as_outside_role(
     current_feedback["comment"] = combined_comment
     current_feedback["rating"] = None
     current_feedback["outside_scope"] = True
+    current_feedback["status"] = "outside_scope"
     current_feedback["feasibility_feedback"] = current_feedback.get("feasibility_feedback") or {}
     cl.user_session.set("current_use_case_feedback", current_feedback)
     cl.user_session.set("awaiting_use_case_opinion", False)
@@ -245,6 +247,7 @@ async def _skip_current_use_case_feedback(
         "description": current_use_case.get("description", ""),
         "rating": None,
         "comment": "",
+        "status": "skipped",
         "feasibility_feedback": {},
     }
     cl.user_session.set("current_use_case_feedback", current_feedback)
@@ -333,6 +336,8 @@ async def _handle_use_case_rating_submission(
         current_feedback["comment"] = "\n".join(
             part for part in [existing_comment, rating_comment] if part
         ).strip()
+    if current_feedback.get("comment") and current_feedback.get("status") != "outside_scope":
+        current_feedback["status"] = use_case_feedback_status_from_comment(current_feedback.get("comment", ""))
     cl.user_session.set("current_use_case_feedback", current_feedback)
     cl.user_session.set("awaiting_use_case_rating", False)
     return await _begin_use_case_feasibility_or_advance(
@@ -682,6 +687,10 @@ async def maybe_handle_closure_phase(user_input: str, message, save_checkpoint, 
             intent = "opinion"
             has_substantive_opinion = True
             extracted_opinion = short_reaction
+        if use_case_feedback_status_from_comment(extracted_opinion or user_input) == "existing_capability":
+            intent = "opinion"
+            has_substantive_opinion = True
+            extracted_opinion = extracted_opinion or user_input
 
         if skipped_opinion:
             messages.append({"role": "user", "content": user_input})
@@ -750,6 +759,7 @@ async def maybe_handle_closure_phase(user_input: str, message, save_checkpoint, 
                 "description": current_use_case.get("description", ""),
                 "rating": None,
                 "comment": user_input,
+                "status": use_case_feedback_status_from_comment(user_input),
                 "feasibility_feedback": {},
             }
             if _text_resolves_outside_role(user_input):
@@ -795,6 +805,7 @@ async def maybe_handle_closure_phase(user_input: str, message, save_checkpoint, 
             "description": current_use_case.get("description", ""),
             "rating": None,
             "comment": "" if skipped_opinion else (extracted_opinion or user_input),
+            "status": use_case_feedback_status_from_comment(extracted_opinion or user_input),
             "feasibility_feedback": {},
         }
         cl.user_session.set("current_use_case_feedback", current_feedback)
@@ -827,7 +838,7 @@ async def maybe_handle_closure_phase(user_input: str, message, save_checkpoint, 
 
         cl.user_session.set("awaiting_use_case_rating", True)
 
-        rating_prompt = build_use_case_rating_followup()
+        rating_prompt = build_use_case_rating_followup(current_feedback.get("status", ""))
         await _send_use_case_rating_prompt(send_assistant_message, messages, rating_prompt)
         save_checkpoint(message)
         return True
@@ -858,6 +869,8 @@ async def maybe_handle_closure_phase(user_input: str, message, save_checkpoint, 
         existing_comment = str(current_feedback.get("comment", "")).strip()
         combined_comment = "\n".join(part for part in [existing_comment, user_input] if part).strip()
         current_feedback["comment"] = combined_comment
+        if current_feedback.get("status") != "outside_scope":
+            current_feedback["status"] = use_case_feedback_status_from_comment(combined_comment)
         cl.user_session.set("current_use_case_feedback", current_feedback)
 
         if resolution_intent == "outside_role":
@@ -873,7 +886,7 @@ async def maybe_handle_closure_phase(user_input: str, message, save_checkpoint, 
         if resolution_intent == "low_value":
             cl.user_session.set("awaiting_use_case_scope_resolution", False)
             cl.user_session.set("awaiting_use_case_rating", True)
-            rating_prompt = build_use_case_rating_followup()
+            rating_prompt = build_use_case_rating_followup(current_feedback.get("status", ""))
             await _send_use_case_rating_prompt(send_assistant_message, messages, rating_prompt)
             save_checkpoint(message)
             return True

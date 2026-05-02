@@ -224,9 +224,99 @@
     return Math.max(min, Math.min(max, value));
   }
 
-  function countUserMessages(text) {
-    var matches = text.match(/Avatar for User/gi);
-    return matches ? matches.length : 0;
+  function containsAny(text, needles) {
+    var lowered = String(text || '').toLowerCase();
+    return needles.some(function (needle) {
+      return lowered.indexOf(needle) !== -1;
+    });
+  }
+
+  function estimateMainInterviewProgress(text) {
+    if (!containsAny(text, [
+      "what are your main day-to-day tasks",
+      "what are the main business goals or strategic priorities",
+      "let's start:",
+    ])) {
+      return 0;
+    }
+
+    var progress = 0.22;
+
+    // Mirrors the backend readiness categories: task detail, friction, systems/data,
+    // goals/KPIs, and feasibility context. This avoids fake progress from message count.
+    if (containsAny(text, [
+      "besides",
+      "what other tasks",
+      "walk me through",
+      "what steps",
+      "what do you do next",
+      "manual steps",
+    ])) {
+      progress = Math.max(progress, 0.34);
+    }
+
+    if (containsAny(text, [
+      "frustrating",
+      "repetitive",
+      "time-consuming",
+      "most difficult",
+      "takes the most effort",
+      "manual",
+      "error-prone",
+      "bottleneck",
+      "worth improving",
+    ])) {
+      progress = Math.max(progress, 0.46);
+    }
+
+    if (containsAny(text, [
+      "which tools",
+      "what tools",
+      "which apps",
+      "what apps",
+      "which systems",
+      "what systems",
+      "data sources",
+      "current systems",
+      "platform",
+      "software",
+    ])) {
+      progress = Math.max(progress, 0.56);
+    }
+
+    if (containsAny(text, [
+      "how is your work measured",
+      "work measured",
+      "kpi",
+      "kpis",
+      "metric",
+      "target",
+      "goal",
+      "success",
+      "what tells you",
+      "business goals",
+      "strategic priorities",
+    ])) {
+      progress = Math.max(progress, 0.66);
+    }
+
+    if (containsAny(text, [
+      "data quality",
+      "data availability",
+      "data foundation",
+      "needed data",
+      "regulatory",
+      "compliance",
+      "privacy",
+      "technical constraint",
+      "technical constraints",
+      "implementation",
+      "explainability",
+    ])) {
+      progress = Math.max(progress, 0.74);
+    }
+
+    return progress;
   }
 
   function shouldShowInterviewProgressBar() {
@@ -285,17 +375,17 @@
     if (text.indexOf('Before the final review step') !== -1) return 0.76;
     if (text.indexOf('How would you rate it from 1 to 5') !== -1) return 0.86;
     if (text.indexOf('One short feasibility check before we move on.') !== -1) return 0.9;
-    if (text.indexOf('What are your main day-to-day tasks?') !== -1) return 0.22;
+
+    var mainInterviewProgress = estimateMainInterviewProgress(text);
+    if (mainInterviewProgress > 0) {
+      return mainInterviewProgress;
+    }
+
     if (text.indexOf('What company do you work for?') !== -1) return 0.1;
     if (text.indexOf('What is your company website URL?') !== -1) return 0.14;
     if (text.indexOf('What\'s your work email?') !== -1) return 0.18;
     if (text.indexOf('What department do you work in?') !== -1) return 0.2;
     if (text.indexOf('What\'s your position/role?') !== -1) return 0.22;
-
-    var userMessages = countUserMessages(text);
-    if (userMessages > 0) {
-      return clamp(0.12 + userMessages * 0.045, 0.12, 0.74);
-    }
 
     return 0.06;
   }

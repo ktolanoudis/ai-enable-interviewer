@@ -95,6 +95,64 @@ class QuestionFlowThemeValidationTests(unittest.TestCase):
         next_question_mock.assert_called_once()
         self.assertFalse(hasattr(question_flow, "phrase_question_for_objective"))
 
+    def test_repeated_time_question_is_suppressed_after_baseline_exists(self):
+        fake_chainlit = types.SimpleNamespace(user_session=_FakeUserSession())
+        fake_chainlit.user_session.set("metadata", {"role": "Teacher", "department": "Teaching"})
+        fake_chainlit.user_session.set("seniority_level", "junior")
+        fake_chainlit.user_session.set("interview_count", 0)
+        fake_chainlit.user_session.set("company_context", None)
+        fake_chainlit.user_session.set("deterministic_ready_streak", 0)
+        messages = [
+            {"role": "assistant", "content": "About how much time do you spend preparing materials after each lesson?"},
+            {"role": "user", "content": "About two hours before and after each lesson."},
+        ]
+        notes = {
+            "tasks": [
+                {
+                    "name": "Create exercise documents",
+                    "description": "Prepare grammar and vocabulary exercises",
+                    "manual_steps": ["Write exercises"],
+                    "time_spent": "2 hours per lesson",
+                    "frequency": "after every lesson",
+                    "friction_level": "high",
+                    "friction_points": ["Created from scratch"],
+                    "current_systems": ["Word"],
+                }
+            ],
+            "business_goals": [],
+            "kpis_mentioned": [],
+            "ready_for_report": False,
+        }
+
+        with patch.object(question_flow, "cl", fake_chainlit), patch.object(
+            question_flow,
+            "update_notes",
+            return_value=notes,
+        ), patch.object(
+            question_flow,
+            "evaluate_notes_readiness",
+            return_value={
+                "strict_ready": False,
+                "turn_limit_ready": False,
+                "task_described_count": 1,
+                "task_with_friction_count": 1,
+                "friction_points_count": 1,
+                "goals_or_kpis_count": 0,
+                "systems_or_data_count": 1,
+                "feasibility_signal_count": 0,
+                "llm_ready_for_report": False,
+            },
+        ), patch.object(
+            question_flow,
+            "next_question",
+            return_value="How much time do you spend creating exercise documents?",
+        ):
+            response = question_flow.plan_interview_response(messages)
+
+        self.assertNotIn("how much time", response.lower())
+        self.assertIn("difficult", response.lower())
+        self.assertIn("create exercise documents", response.lower())
+
     def test_approval_theme_is_not_covered_by_assistant_company_context(self):
         theme = {
             "theme_key": "approval_bottlenecks",

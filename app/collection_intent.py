@@ -16,6 +16,9 @@ def _fallback_parse(field: str, user_message: str) -> dict:
         if "@" in text:
             return {"intent": "invalid", "value": text}
 
+    if field in {"department", "role"}:
+        return {"intent": "provide", "value": normalize_collection_value(field, text)}
+
     return {"intent": "provide", "value": text}
 
 
@@ -37,6 +40,64 @@ def _looks_like_privacy_refusal(text: str) -> bool:
         "personal email",
     ]
     return any(marker in normalized for marker in refusal_markers)
+
+
+def _title_case_metadata_value(value: str) -> str:
+    words = str(value or "").strip().split()
+    if not words:
+        return ""
+    lowercase_words = {"and", "of", "or", "the", "to", "for", "in"}
+    titled = []
+    for index, word in enumerate(words):
+        if word.isupper():
+            titled.append(word)
+        elif index > 0 and word.lower() in lowercase_words:
+            titled.append(word.lower())
+        else:
+            titled.append(word[:1].upper() + word[1:])
+    return " ".join(titled)
+
+
+def normalize_collection_value(field: str, value: str) -> str:
+    text = re.sub(r"\s+", " ", str(value or "").strip())
+    if not text:
+        return ""
+
+    normalized = text.lower().strip(" .")
+    patterns = [
+        r"^(?:my\s+)?(?:department|team|function)\s+is\s+(.+)$",
+        r"^(?:i\s+work|i'm|i\s+am|im)\s+in\s+(?:the\s+)?(.+?)(?:\s+department|\s+team)?$",
+        r"^(?:my\s+)?(?:position|role|job|job\s+title)\s+is\s+(.+)$",
+        r"^(?:i\s+work\s+as|i'm|i\s+am|im)\s+(?:a|an|the)\s+(.+)$",
+        r"^(?:i\s+work\s+as|i'm|i\s+am|im)\s+(.+)$",
+    ]
+    for pattern in patterns:
+        match = re.match(pattern, normalized, re.I)
+        if match:
+            normalized = match.group(1).strip(" .")
+            break
+
+    department_from_role = {
+        "teacher": "Teaching",
+        "language teacher": "Teaching",
+        "greek teacher": "Teaching",
+        "tutor": "Teaching",
+        "instructor": "Teaching",
+        "professor": "Teaching",
+        "educator": "Teaching",
+        "software engineer": "Engineering",
+        "developer": "Engineering",
+        "engineer": "Engineering",
+        "salesperson": "Sales",
+        "sales associate": "Sales",
+        "customer service associate": "Customer Service",
+        "support agent": "Customer Support",
+    }
+
+    if field == "department" and normalized in department_from_role:
+        return department_from_role[normalized]
+
+    return _title_case_metadata_value(normalized)
 
 
 def _deterministic_parse(field: str, user_message: str) -> Optional[dict]:
@@ -81,7 +142,7 @@ def _deterministic_parse(field: str, user_message: str) -> Optional[dict]:
     if field == "company" and normalized.startswith("i work for "):
         return {"intent": "provide", "value": text[11:].strip()}
     if field in {"department", "role"} and len(text.split()) <= 8:
-        return {"intent": "provide", "value": text}
+        return {"intent": "provide", "value": normalize_collection_value(field, text)}
     return None
 
 
@@ -120,6 +181,9 @@ Rules:
   - anonymous/privacy requests should become "anonymous"
 - For company, department, and role:
   - privacy/refusal requests can become "anonymous" or "skip"
+  - strip conversational wrappers like "I am a teacher", "my role is analyst", or "I work in operations"
+  - department should be a functional area, not a full sentence
+  - role should be the job title, not a full sentence
 - If the user actually provides the requested value in natural language, extract the value cleanly.
 - Return only valid JSON.
 """
@@ -145,6 +209,8 @@ Rules:
         value = str(data.get("value", "")).strip()
         if intent not in {"provide", "skip", "anonymous", "invalid"}:
             return _fallback_parse(field, user_message)
+        if intent == "provide" and field in {"department", "role"}:
+            value = normalize_collection_value(field, value)
         return {"intent": intent, "value": value}
     except Exception:
         return _fallback_parse(field, user_message)

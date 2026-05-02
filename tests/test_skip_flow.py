@@ -28,6 +28,18 @@ class _FakeUserSession:
 
 
 class SkipFlowTests(unittest.TestCase):
+    def test_uncertainty_acknowledgement_is_deduplicated(self):
+        response = chainlit_app._with_single_uncertainty_ack(
+            "That’s totally okay not to know. We can keep it simple. What part feels most repetitive?",
+            "That's okay, we can move on to the next question.",
+        )
+
+        self.assertEqual(
+            response,
+            "That's okay, we can move on to the next question.\n\nWe can keep it simple. What part feels most repetitive?",
+        )
+        self.assertEqual(response.lower().count("okay"), 1)
+
     def test_plain_skip_uses_planner_not_adjacent_uncertainty_recovery(self):
         fake_chainlit = types.SimpleNamespace(user_session=_FakeUserSession())
         fake_chainlit.user_session.set("collection_step", None)

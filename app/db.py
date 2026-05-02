@@ -645,6 +645,10 @@ def _merge_validated_use_case_feedback(existing_items: Optional[List], new_items
             "rating_count": rating_count,
             "rating_sum": rating_sum,
             "average_rating": average_rating,
+            "existing_capability_count": int(item.get("existing_capability_count", 0) or 0),
+            "existing_solution_rating_count": int(item.get("existing_solution_rating_count", 0) or 0),
+            "existing_solution_rating_sum": float(item.get("existing_solution_rating_sum", 0) or 0),
+            "average_existing_solution_rating": item.get("average_existing_solution_rating"),
             "support_count": int(item.get("support_count", 0) or 0),
             "concern_count": int(item.get("concern_count", 0) or 0),
             "data_quality_score_count": int(item.get("data_quality_score_count", 0) or 0),
@@ -697,6 +701,14 @@ def _merge_validated_use_case_feedback(existing_items: Optional[List], new_items
             )
             current["support_count"] += entry["support_count"]
             current["concern_count"] += entry["concern_count"]
+            current["existing_capability_count"] = int(current.get("existing_capability_count", 0) or 0) + int(entry.get("existing_capability_count", 0) or 0)
+            current["existing_solution_rating_count"] = int(current.get("existing_solution_rating_count", 0) or 0) + int(entry.get("existing_solution_rating_count", 0) or 0)
+            current["existing_solution_rating_sum"] = float(current.get("existing_solution_rating_sum", 0) or 0) + float(entry.get("existing_solution_rating_sum", 0) or 0)
+            current["average_existing_solution_rating"] = (
+                round(current["existing_solution_rating_sum"] / current["existing_solution_rating_count"], 2)
+                if current["existing_solution_rating_count"] > 0
+                else None
+            )
             current["data_quality_score_count"] += entry["data_quality_score_count"]
             current["data_quality_score_sum"] += entry["data_quality_score_sum"]
             current["average_data_quality_score"] = (

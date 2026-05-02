@@ -187,6 +187,60 @@ class UseCaseSkipFlowTests(unittest.TestCase):
         )
         self.assertIn("How would you rate it from 1 to 5", sent[-1]["content"])
 
+    def test_existing_capability_feedback_gets_existing_solution_rating_prompt(self):
+        fake_chainlit = types.SimpleNamespace(user_session=_FakeUserSession())
+        fake_chainlit.user_session.set("awaiting_use_case_opinion", True)
+        fake_chainlit.user_session.set("awaiting_use_case_rating", False)
+        fake_chainlit.user_session.set("use_case_feedback_index", 0)
+        fake_chainlit.user_session.set("use_case_feedback_entries", [])
+        fake_chainlit.user_session.set(
+            "pending_report_payload",
+            {
+                "use_cases": [
+                    {
+                        "use_case_name": "Exercise Drafting",
+                        "task_name": "Create exercises",
+                        "ai_solution_type": "LLM",
+                        "description": "Draft exercises from lesson notes.",
+                    }
+                ]
+            },
+        )
+        fake_chainlit.user_session.set("messages", [{"role": "assistant", "content": "How does this seem?"}])
+        sent = []
+
+        async def _fake_send_assistant_message(content, actions=None):
+            sent.append({"content": content, "actions": actions or []})
+
+        with patch.object(interview_flow, "cl", fake_chainlit), patch.object(
+            interview_flow,
+            "classify_use_case_feedback_response",
+            return_value={"intent": "structural_feedback"},
+        ), patch.object(
+            interview_flow,
+            "interpret_use_case_opinion_response",
+            return_value={
+                "has_substantive_opinion": True,
+                "opinion_text": "I already do this",
+                "included_rating": None,
+            },
+        ):
+            handled = asyncio.run(
+                interview_flow.maybe_handle_closure_phase(
+                    "I already do this",
+                    None,
+                    lambda *args, **kwargs: None,
+                    _fake_send_assistant_message,
+                )
+            )
+
+        self.assertTrue(handled)
+        self.assertTrue(fake_chainlit.user_session.get("awaiting_use_case_rating"))
+        current = fake_chainlit.user_session.get("current_use_case_feedback")
+        self.assertEqual(current["status"], "existing_capability")
+        self.assertEqual(current["comment"], "I already do this")
+        self.assertIn("how well does the current solution work", sent[-1]["content"])
+
     def test_skip_at_rating_step_skips_entire_use_case(self):
         fake_chainlit = types.SimpleNamespace(user_session=_FakeUserSession())
         fake_chainlit.user_session.set("awaiting_use_case_rating", True)
