@@ -11,6 +11,8 @@
   var maxInterviewProgress = 0;
   var surveyRedirectTimer = null;
   var progressUpdateTimer = null;
+  var useCaseScrollTimer = null;
+  var lastUseCaseScrollTarget = null;
 
   function setTitle() {
     document.title = 'AI-Enable Interviewer';
@@ -500,6 +502,87 @@
     setStoredSurveyRedirectHref(link.href);
   }
 
+  function isVisibleElement(el) {
+    if (!el || typeof el.getBoundingClientRect !== 'function') return false;
+    var rect = el.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+  }
+
+  function nearestMessageContainer(el) {
+    if (!el || !el.closest) return el;
+    return el.closest(
+      [
+        '[data-testid*="message"]',
+        '[data-testid*="Message"]',
+        '[class*="message"]',
+        '[class*="Message"]',
+        'article',
+        'li',
+      ].join(',')
+    ) || el;
+  }
+
+  function findUseCaseReviewMessage() {
+    var candidates = Array.prototype.slice.call(
+      document.querySelectorAll('article, li, section, div, p, h1, h2, h3')
+    );
+    var best = null;
+    var bestArea = Infinity;
+    for (var i = 0; i < candidates.length; i += 1) {
+      var el = candidates[i];
+      if (!isVisibleElement(el)) continue;
+      var text = el.innerText || el.textContent || '';
+      if (
+        text.indexOf('How does this seem for your work in practice?') === -1
+        || !/\(\s*1\s*\/\s*\d+\s*\)/.test(text)
+      ) {
+        continue;
+      }
+      var container = nearestMessageContainer(el);
+      if (!isVisibleElement(container)) continue;
+      var rect = container.getBoundingClientRect();
+      var area = rect.width * rect.height;
+      if (area > 0 && area < bestArea) {
+        best = container;
+        bestArea = area;
+      }
+    }
+    return best;
+  }
+
+  function scrollUseCaseReviewIntoView() {
+    var target = findUseCaseReviewMessage();
+    if (!target) return;
+    if (target === lastUseCaseScrollTarget) return;
+    lastUseCaseScrollTarget = target;
+
+    target.style.scrollMarginTop = '88px';
+    target.style.scrollMarginBottom = '96px';
+    try {
+      target.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
+    } catch (error) {
+      target.scrollIntoView(false);
+    }
+
+    window.setTimeout(function () {
+      try {
+        target.scrollIntoView({ behavior: 'auto', block: 'center', inline: 'nearest' });
+      } catch (error) {
+        target.scrollIntoView(false);
+      }
+    }, 450);
+  }
+
+  function scheduleUseCaseReviewScroll() {
+    if (useCaseScrollTimer) {
+      window.clearTimeout(useCaseScrollTimer);
+    }
+    useCaseScrollTimer = window.setTimeout(function () {
+      useCaseScrollTimer = null;
+      window.requestAnimationFrame(scrollUseCaseReviewIntoView);
+    }, 120);
+  }
+
   function observeProgressTriggers() {
     if (progressInterval) return;
     progressInterval = window.setInterval(scheduleProgressUpdate, 3000);
@@ -516,6 +599,33 @@
         scheduleProgressUpdate();
       }
     }, true);
+
+    if (window.MutationObserver && document.body) {
+      var observer = new MutationObserver(function (mutations) {
+        var shouldCheckUseCaseReview = false;
+        for (var i = 0; i < mutations.length; i += 1) {
+          var mutation = mutations[i];
+          for (var j = 0; j < mutation.addedNodes.length; j += 1) {
+            var node = mutation.addedNodes[j];
+            var text = node && (node.innerText || node.textContent || '');
+            if (
+              text
+              && text.indexOf('How does this seem for your work in practice?') !== -1
+              && /\(\s*1\s*\/\s*\d+\s*\)/.test(text)
+            ) {
+              shouldCheckUseCaseReview = true;
+              break;
+            }
+          }
+          if (shouldCheckUseCaseReview) break;
+        }
+        if (shouldCheckUseCaseReview) {
+          scheduleUseCaseReviewScroll();
+        }
+      });
+      observer.observe(document.body, { childList: true, subtree: true });
+      scheduleUseCaseReviewScroll();
+    }
   }
 
   function setCookie(name, value, maxAgeSeconds) {
